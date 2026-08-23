@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -155,7 +155,7 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
                 request.text(),
                 StringUtils.defaultIfBlank(request.responseFormat(), "wav")
         );
-        TtsHttpResponse response = postJson(URI.create("%s/audio/speech".formatted(BASE_URL)), jsonHeaders(apiKey), body);
+        HttpExchangeResponse response = postJson(URI.create("%s/audio/speech".formatted(BASE_URL)), jsonHeaders(apiKey), body);
         return audioBody(response, "wav");
     }
 

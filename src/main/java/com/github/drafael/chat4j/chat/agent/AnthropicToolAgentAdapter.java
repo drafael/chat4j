@@ -1,9 +1,12 @@
 package com.github.drafael.chat4j.chat.agent;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.chat.render.BoundedUtf8;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
@@ -14,9 +17,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.nio.charset.StandardCharsets;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,10 +30,8 @@ import static java.util.stream.Collectors.joining;
 
 final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
+    private static final JsonCodec JSON = JsonCodec.standard();
+    private static final HttpTransport HTTP_TRANSPORT = JavaNetHttpTransport.create(Duration.ofSeconds(5), RedirectPolicy.NEVER);
 
     private final String modelId;
     private final String baseUrl;
@@ -182,20 +181,18 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
             String systemPrompt = resolveSystemPrompt(projectionPlan);
             payload.put("system", mergeSystemPrompt(systemPrompt, request));
 
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(messagesEndpoint(baseUrl)))
-                    .timeout(Duration.ofSeconds(60))
-                    .header("Content-Type", "application/json")
-                    .header("anthropic-version", "2023-06-01")
-                    .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(payload), StandardCharsets.UTF_8));
-
-            applyAuthHeaders(requestBuilder);
-
-            AgentHttpSupport.Response response = AgentHttpSupport.send(
-                    HTTP_CLIENT,
-                    requestBuilder.build(),
-                    request.isCancelled()
+            Map<String, String> headers = authHeaders();
+            headers.put("Content-Type", "application/json");
+            headers.put("anthropic-version", "2023-06-01");
+            var httpRequest = new HttpExchangeRequest(
+                    "POST",
+                    URI.create(messagesEndpoint(baseUrl)),
+                    headers,
+                    HttpBody.bytes(JSON.writeBytes(payload)),
+                    Duration.ofSeconds(60),
+                    0
             );
+            HttpExchangeResponse response = HTTP_TRANSPORT.send(httpRequest, request.isCancelled());
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
@@ -203,26 +200,26 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("Anthropic tool turn failed (%d): %s".formatted(
                         response.statusCode(),
-                        BoundedUtf8.presentation(response.body(), 512, 2_048)
+                        BoundedUtf8.presentation(response.bodyText(), 512, 2_048)
                 ));
             }
 
-            JsonNode root = JSON.readTree(response.body());
+            AnthropicAgentApi.Response root = JSON.read(response.body(), AnthropicAgentApi.Response.class);
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
-            JsonNode contentNode = root.path("content");
-            String assistantText = extractAssistantText(contentNode);
+            List<AnthropicAgentApi.ContentBlock> content = root.content() == null ? emptyList() : root.content();
+            String assistantText = extractAssistantText(content);
             if (StringUtils.isNotBlank(assistantText) && !shouldStop(request)) {
                 callbacks.onToken().accept(assistantText);
             }
 
-            List<ToolInvocationRequest> toolInvocations = extractToolInvocations(contentNode);
+            List<ToolInvocationRequest> toolInvocations = extractToolInvocations(content);
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
             if (!toolInvocations.isEmpty()) {
-                pendingToolUses = toPendingToolUses(contentNode);
+                pendingToolUses = toPendingToolUses(content);
                 return AgentTurnResult.continueWithTools(toolInvocations);
             }
 
@@ -245,18 +242,18 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         return Thread.currentThread().isInterrupted() || request.isCancelled().getAsBoolean();
     }
 
-    private void applyAuthHeaders(HttpRequest.Builder requestBuilder) {
+    private Map<String, String> authHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
         if (StringUtils.isBlank(apiKey)) {
-            return;
+            return headers;
         }
-
         if (authMode == AuthMode.COPILOT_BEARER) {
-            requestBuilder.header("Authorization", "Bearer %s".formatted(apiKey));
-            CopilotRequestHeaders.asMap().forEach(requestBuilder::header);
-            return;
+            headers.put("Authorization", "Bearer %s".formatted(apiKey));
+            headers.putAll(CopilotRequestHeaders.asMap());
+        } else {
+            headers.put("x-api-key", apiKey);
         }
-
-        requestBuilder.header("x-api-key", apiKey);
+        return headers;
     }
 
     private String resolveSystemPrompt(AttachmentProjectionPlan projectionPlan) {
@@ -332,65 +329,31 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         pendingToolUses = emptyList();
     }
 
-    private String extractAssistantText(JsonNode contentNode) {
-        if (!contentNode.isArray()) {
-            return "";
-        }
-
-        StringBuilder collected = new StringBuilder();
-        for (JsonNode blockNode : contentNode) {
-            if (Strings.CS.equals(blockNode.path("type").asText(""), "text")) {
-                collected.append(blockNode.path("text").asText(""));
-            }
-        }
-
-        return collected.toString();
+    private String extractAssistantText(List<AnthropicAgentApi.ContentBlock> content) {
+        return content.stream()
+                .filter(block -> block != null && Strings.CS.equals(block.type(), "text"))
+                .map(AnthropicAgentApi.ContentBlock::text)
+                .map(StringUtils::defaultString)
+                .collect(joining());
     }
 
-    private List<ToolInvocationRequest> extractToolInvocations(JsonNode contentNode) throws Exception {
-        if (!contentNode.isArray()) {
-            return emptyList();
-        }
-
-        List<ToolInvocationRequest> invocations = new ArrayList<>();
-        for (JsonNode blockNode : contentNode) {
-            if (!Strings.CS.equals(blockNode.path("type").asText(""), "tool_use")) {
-                continue;
-            }
-
-            String id = blockNode.path("id").asText("");
-            String name = blockNode.path("name").asText("");
-            JsonNode input = blockNode.path("input");
-            String argumentsJson = input.isMissingNode() || input.isNull()
-                    ? "{}"
-                    : JSON.writeValueAsString(input);
-            if (StringUtils.isBlank(name)) {
-                continue;
-            }
-
-            invocations.add(new ToolInvocationRequest(id, name, argumentsJson));
-        }
-
-        return invocations;
+    private List<ToolInvocationRequest> extractToolInvocations(List<AnthropicAgentApi.ContentBlock> content) {
+        return content.stream()
+                .filter(block -> block != null && Strings.CS.equals(block.type(), "tool_use"))
+                .filter(block -> StringUtils.isNotBlank(block.name()))
+                .map(block -> new ToolInvocationRequest(
+                        StringUtils.defaultString(block.id()),
+                        block.name(),
+                        block.input() == null ? "{}" : JSON.writeString(block.input())
+                ))
+                .toList();
     }
 
-    private List<Map<String, Object>> toPendingToolUses(JsonNode contentNode) throws Exception {
-        if (!contentNode.isArray()) {
-            return emptyList();
-        }
-
-        List<Map<String, Object>> pending = new ArrayList<>();
-        for (JsonNode blockNode : contentNode) {
-            if (!Strings.CS.equals(blockNode.path("type").asText(""), "tool_use")) {
-                continue;
-            }
-
-            Map<String, Object> block = JSON.convertValue(blockNode, new TypeReference<>() {
-            });
-            pending.add(block);
-        }
-
-        return pending;
+    private List<Map<String, Object>> toPendingToolUses(List<AnthropicAgentApi.ContentBlock> content) {
+        return content.stream()
+                .filter(block -> block != null && Strings.CS.equals(block.type(), "tool_use"))
+                .map(AnthropicAgentApi.ContentBlock::asToolUseMap)
+                .toList();
     }
 
     private String normalizeBaseUrl(String rawBaseUrl) {

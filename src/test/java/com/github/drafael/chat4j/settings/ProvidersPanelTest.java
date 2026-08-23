@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.provider.support.BlockingHttpClientTransport;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
@@ -400,7 +401,7 @@ class ProvidersPanelTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("lifecycle-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthStatus resolveStatus() {
@@ -455,7 +456,7 @@ class ProvidersPanelTest {
                 new CodexAuthResolver(
                         tempDir.resolve("lifecycle-codex-home"),
                         emptyMap(),
-                        HttpClient.newHttpClient()
+                        new BlockingHttpClientTransport(HttpClient.newHttpClient())
                 )
         ));
 
@@ -496,7 +497,7 @@ class ProvidersPanelTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("cancelled-ui-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthStatus resolveStatus() {
@@ -535,7 +536,7 @@ class ProvidersPanelTest {
                 new CodexAuthResolver(
                         tempDir.resolve("cancelled-ui-codex-home"),
                         emptyMap(),
-                        HttpClient.newHttpClient()
+                        new BlockingHttpClientTransport(HttpClient.newHttpClient())
                 )
         ));
 
@@ -579,7 +580,7 @@ class ProvidersPanelTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("throwing-listener-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthStatus resolveStatus() {
@@ -603,7 +604,7 @@ class ProvidersPanelTest {
         CodexAuthResolver codexAuthResolver = new CodexAuthResolver(
                 tempDir.resolve("throwing-listener-codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CodexAuthStatus resolveStatus() {
@@ -667,7 +668,7 @@ class ProvidersPanelTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("throwing-login-listener-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthStatus resolveStatus() {
@@ -695,7 +696,7 @@ class ProvidersPanelTest {
         CodexAuthResolver codexAuthResolver = new CodexAuthResolver(
                 tempDir.resolve("throwing-login-listener-codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CodexAuthStatus resolveStatus() {
@@ -762,7 +763,7 @@ class ProvidersPanelTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("reattached-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthStatus resolveStatus() {
@@ -805,7 +806,7 @@ class ProvidersPanelTest {
                 new CodexAuthResolver(
                         tempDir.resolve("reattached-codex-home"),
                         emptyMap(),
-                        HttpClient.newHttpClient()
+                        new BlockingHttpClientTransport(HttpClient.newHttpClient())
                 )
         ));
 
@@ -842,7 +843,7 @@ class ProvidersPanelTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("status-thread-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthStatus resolveStatus() {
@@ -854,7 +855,7 @@ class ProvidersPanelTest {
         CodexAuthResolver codexAuthResolver = new CodexAuthResolver(
                 tempDir.resolve("status-thread-codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CodexAuthStatus resolveStatus() {
@@ -921,7 +922,7 @@ class ProvidersPanelTest {
         var resolver = new CopilotAuthResolver(
                 tempDir.resolve("dialog-cancellation-home"),
                 Map.of("CHAT4J_COPILOT_OAUTH_CLIENT_ID", "chat4j-client-id"),
-                httpClient
+                new BlockingHttpClientTransport(httpClient)
         );
         var dialogCancellationRequested = new AtomicBoolean();
         var loginResult = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
@@ -1041,12 +1042,12 @@ class ProvidersPanelTest {
                 new CopilotAuthResolver(
                         tempDir.resolve("copilot-home"),
                         emptyMap(),
-                        HttpClient.newHttpClient()
+                        new BlockingHttpClientTransport(HttpClient.newHttpClient())
                 ),
                 new CodexAuthResolver(
                         tempDir.resolve("codex-home"),
                         emptyMap(),
-                        HttpClient.newHttpClient()
+                        new BlockingHttpClientTransport(HttpClient.newHttpClient())
                 )
         );
     }

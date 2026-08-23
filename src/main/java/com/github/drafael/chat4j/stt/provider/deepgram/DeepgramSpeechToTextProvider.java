@@ -1,19 +1,18 @@
 package com.github.drafael.chat4j.stt.provider.deepgram;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.HttpBody;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpRequest;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -32,11 +31,11 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
     private static final long TRANSCRIPTION_RESPONSE_LIMIT_BYTES = 5L * 1024L * 1024L;
     private static final long MODEL_RESPONSE_LIMIT_BYTES = 2L * 1024L * 1024L;
     private static final int ERROR_DETAIL_LIMIT = 300;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
-    private final SttHttpTransport transport;
+    private final HttpTransport transport;
 
-    public DeepgramSpeechToTextProvider(SttHttpTransport transport) {
+    public DeepgramSpeechToTextProvider(HttpTransport transport) {
         this.transport = transport;
     }
 
@@ -81,15 +80,15 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         if (!available(context.credentialSource())) {
             throw new SpeechToTextException("Deepgram model catalog refresh requires credentials.");
         }
-        SttHttpRequest request = new SttHttpRequest(
+        HttpExchangeRequest request = new HttpExchangeRequest(
                 "GET",
                 DeepgramSttEndpointResolver.resolve(context.baseUri()).modelsUri(),
                 authJsonHeaders(context),
-                HttpRequest.BodyPublishers.noBody(),
+                HttpBody.empty(),
                 context.timeout(),
                 MODEL_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(request, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(request, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException("Deepgram model catalog refresh failed: %s".formatted(errorDetail(response, context)));
         }
@@ -106,15 +105,15 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
             throw new SpeechToTextException("Recording is too large to upload.");
         }
         String modelId = StringUtils.defaultIfBlank(request.modelId(), DeepgramSpeechToTextModels.DEFAULT_MODEL_ID);
-        SttHttpRequest httpRequest = new SttHttpRequest(
+        HttpExchangeRequest httpRequest = new HttpExchangeRequest(
                 "POST",
                 transcriptionUri(context, modelId),
                 authAudioHeaders(context),
-                HttpRequest.BodyPublishers.ofFile(request.audioFile()),
+                HttpBody.file(request.audioFile()),
                 context.timeout(),
                 TRANSCRIPTION_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(httpRequest, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(httpRequest, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException(errorMessage(response, context));
         }
@@ -122,36 +121,35 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private List<SpeechToTextCatalogItem> parseModels(byte[] body) throws Exception {
-        JsonNode root;
+        DeepgramSttApi.ModelsResponse response;
         try {
-            root = OBJECT_MAPPER.readTree(body);
+            response = JSON_CODEC.read(body, DeepgramSttApi.ModelsResponse.class);
         } catch (Exception e) {
             throw new SpeechToTextException("Deepgram model catalog response was invalid.", e);
         }
-        JsonNode sttModels = root.path("stt");
-        if (!sttModels.isArray()) {
+        if (response.stt() == null) {
             throw new SpeechToTextException("Deepgram model catalog response was invalid.");
         }
         Map<String, SpeechToTextCatalogItem> models = new LinkedHashMap<>();
-        sttModels.forEach(model -> addModel(models, model));
+        response.stt().stream().filter(java.util.Objects::nonNull).forEach(model -> addModel(models, model));
         return models.values().stream().toList();
     }
 
-    private void addModel(Map<String, SpeechToTextCatalogItem> models, JsonNode model) {
-        if (!model.path("batch").asBoolean(false)) {
+    private void addModel(Map<String, SpeechToTextCatalogItem> models, DeepgramSttApi.Model model) {
+        if (!model.batch()) {
             return;
         }
-        String id = StringUtils.trimToEmpty(firstText(model, "canonical_name")).toLowerCase(Locale.ROOT);
+        String id = StringUtils.trimToEmpty(model.canonicalName()).toLowerCase(Locale.ROOT);
         if (!isSupportedModelId(id)) {
             return;
         }
         models.putIfAbsent(id, new SpeechToTextCatalogItem(id, modelLabel(id), modelDescription(model)));
     }
 
-    private String modelDescription(JsonNode model) {
+    private String modelDescription(DeepgramSttApi.Model model) {
         return Arrays.stream(new String[] {
-                        descriptionPart("Architecture", firstText(model, "architecture")),
-                        descriptionPart("Version", firstText(model, "version"))
+                        descriptionPart("Architecture", model.architecture()),
+                        descriptionPart("Version", model.version())
                 })
                 .filter(StringUtils::isNotBlank)
                 .collect(joining("; "));
@@ -161,14 +159,20 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         return StringUtils.isBlank(value) ? "" : "%s: %s".formatted(label, value);
     }
 
-    private SpeechToTextResult parseTranscript(SttHttpResponse response) throws Exception {
-        JsonNode json;
+    private SpeechToTextResult parseTranscript(HttpExchangeResponse response) throws Exception {
+        DeepgramSttApi.TranscriptionResponse body;
         try {
-            json = OBJECT_MAPPER.readTree(response.body());
+            body = JSON_CODEC.read(response.body(), DeepgramSttApi.TranscriptionResponse.class);
         } catch (Exception e) {
             throw new SpeechToTextException("Transcription response was invalid.", e);
         }
-        String text = StringUtils.trimToEmpty(json.path("results").path("channels").path(0).path("alternatives").path(0).path("transcript").asText(""));
+        String text = body.results() == null || body.results().channels() == null || body.results().channels().isEmpty()
+                || body.results().channels().getFirst() == null
+                || body.results().channels().getFirst().alternatives() == null
+                || body.results().channels().getFirst().alternatives().isEmpty()
+                || body.results().channels().getFirst().alternatives().getFirst() == null
+                ? ""
+                : StringUtils.trimToEmpty(body.results().channels().getFirst().alternatives().getFirst().transcript());
         if (text.isBlank()) {
             throw new SpeechToTextException("No speech was recorded.");
         }
@@ -199,7 +203,7 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         );
     }
 
-    private String errorMessage(SttHttpResponse response, SpeechToTextProviderContext context) {
+    private String errorMessage(HttpExchangeResponse response, SpeechToTextProviderContext context) {
         return switch (response.statusCode()) {
             case 401, 403 -> "Deepgram credentials were rejected.";
             case 404 -> "Deepgram speech-to-text endpoint or model was not found.";
@@ -211,17 +215,16 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         };
     }
 
-    private String errorDetail(SttHttpResponse response, SpeechToTextProviderContext context) {
+    private String errorDetail(HttpExchangeResponse response, SpeechToTextProviderContext context) {
         String body = StringUtils.abbreviate(response.bodyText(), 64 * 1024);
         try {
-            JsonNode json = OBJECT_MAPPER.readTree(body);
+            DeepgramSttApi.ErrorResponse error = JSON_CODEC.read(body, DeepgramSttApi.ErrorResponse.class);
             String message = firstNonBlank(
-                    json.path("err_msg").asText(""),
-                    json.path("err_code").asText(""),
-                    detailMessage(json.path("detail")),
-                    json.path("message").asText(""),
-                    json.path("error").path("message").asText(""),
-                    json.path("error").asText("")
+                    error.errorMessage(),
+                    error.errorCode(),
+                    detailMessage(error.detail()),
+                    error.message(),
+                    detailMessage(error.error())
             );
             return safeDetail(StringUtils.defaultIfBlank(message, "HTTP %d".formatted(response.statusCode())), context);
         } catch (Exception e) {
@@ -229,19 +232,21 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         }
     }
 
-    private String detailMessage(JsonNode detail) {
-        if (detail.isTextual()) {
-            return detail.asText("");
+    private String detailMessage(Object detail) {
+        if (detail instanceof String text) {
+            return text;
         }
-        if (detail.isObject()) {
-            return firstNonBlank(detail.path("message").asText(""), detail.path("err_msg").asText(""));
+        if (detail instanceof Map<?, ?> object) {
+            return firstNonBlank(stringValue(object.get("message")), stringValue(object.get("err_msg")));
         }
-        if (detail.isArray()) {
-            return detail.findValuesAsText("message").stream()
-                    .filter(StringUtils::isNotBlank)
-                    .collect(joining("; "));
+        if (detail instanceof List<?> values) {
+            return values.stream().map(this::detailMessage).filter(StringUtils::isNotBlank).collect(joining("; "));
         }
         return "";
+    }
+
+    private String stringValue(Object value) {
+        return value instanceof String text ? text : "";
     }
 
     private String safeDetail(String message, SpeechToTextProviderContext context) {
@@ -275,14 +280,6 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
                 .filter(StringUtils::isNotBlank)
                 .map(StringUtils::capitalize)
                 .collect(joining(" ")));
-    }
-
-    private String firstText(JsonNode node, String... fields) {
-        return Arrays.stream(fields)
-                .map(field -> node.path(field).asText(""))
-                .filter(StringUtils::isNotBlank)
-                .findFirst()
-                .orElse("");
     }
 
     private String firstNonBlank(String... values) {

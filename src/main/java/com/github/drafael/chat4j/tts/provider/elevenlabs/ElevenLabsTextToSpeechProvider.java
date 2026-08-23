@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -127,7 +127,7 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
         );
         String encodedVoiceId = URLEncoder.encode(voiceId, StandardCharsets.UTF_8);
         URI uri = URI.create("%s/v1/text-to-speech/%s?output_format=mp3_44100_128".formatted(BASE_URL, encodedVoiceId));
-        TtsHttpResponse response = postJson(uri, jsonHeaders(apiKey), body);
+        HttpExchangeResponse response = postJson(uri, jsonHeaders(apiKey), body);
         return audioBody(response, "mp3");
     }
 

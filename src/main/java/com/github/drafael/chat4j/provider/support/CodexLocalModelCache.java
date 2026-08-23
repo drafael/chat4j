@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.github.drafael.chat4j.json.JsonCodec;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -12,14 +12,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.stream.StreamSupport;
 
 import static java.util.Collections.emptyList;
 
 @Slf4j
 public final class CodexLocalModelCache {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
     private static final List<String> BUILTIN_CODEX_MODELS = List.of(
             "gpt-5.5",
@@ -65,13 +64,13 @@ public final class CodexLocalModelCache {
                 return LocalModels.empty(true);
             }
 
-            JsonNode models = JSON.readTree(Files.readString(modelCache, StandardCharsets.UTF_8)).path("models");
-            if (!models.isArray()) {
+            ModelCache cache = JSON.read(Files.readString(modelCache, StandardCharsets.UTF_8), ModelCache.class);
+            if (cache.models() == null) {
                 return LocalModels.empty(false);
             }
 
-            List<String> visible = modelSlugs(models, false);
-            List<String> hidden = modelSlugs(models, true);
+            List<String> visible = modelSlugs(cache.models(), false);
+            List<String> hidden = modelSlugs(cache.models(), true);
             return new LocalModels(visible, hidden, true);
         } catch (Exception e) {
             log.warn("Failed reading OpenAI Codex models cache: {}", ExceptionUtils.getMessage(e));
@@ -79,10 +78,10 @@ public final class CodexLocalModelCache {
         }
     }
 
-    private static List<String> modelSlugs(JsonNode models, boolean hidden) {
-        return StreamSupport.stream(models.spliterator(), false)
-                .filter(model -> Strings.CI.equals(model.path("visibility").asText(""), "hide") == hidden)
-                .map(model -> model.path("slug").asText(""))
+    private static List<String> modelSlugs(List<CachedModel> models, boolean hidden) {
+        return models.stream()
+                .filter(model -> model != null && Strings.CI.equals(model.visibility(), "hide") == hidden)
+                .map(CachedModel::slug)
                 .filter(StringUtils::isNotBlank)
                 .map(String::trim)
                 .distinct()
@@ -108,6 +107,14 @@ public final class CodexLocalModelCache {
             models = List.copyOf(models);
             hiddenModels = List.copyOf(hiddenModels);
         }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record ModelCache(List<CachedModel> models) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record CachedModel(String slug, String visibility) {
     }
 
     private record LocalModels(List<String> visible, List<String> hidden, boolean loadedSuccessfully) {

@@ -1,10 +1,13 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.chat.render.BoundedUtf8;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpCall;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
@@ -31,13 +34,9 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -50,12 +49,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Flow;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -65,7 +58,7 @@ import static java.util.stream.Collectors.toCollection;
 @Slf4j
 public class GoogleAiGenerateContentClient implements ChatCompletionClient {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final String GOOGLE_AI_PROVIDER_NAME = "Google AI";
     private static final String DEFAULT_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
@@ -82,7 +75,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
     );
 
     private final ChatCompletionClient fallbackClient;
-    private final HttpClient httpClient;
+    private final HttpTransport transport;
     private final GeneratedImageAttachmentWriter generatedImageAttachmentWriter;
     private final ProviderAttachmentSupport attachmentSupport;
 
@@ -91,17 +84,17 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             @NonNull ProviderAttachmentSupport attachmentSupport,
             @NonNull GeneratedImageAttachmentWriter generatedImageAttachmentWriter
     ) {
-        this(fallbackClient, HttpClient.newHttpClient(), attachmentSupport, generatedImageAttachmentWriter);
+        this(fallbackClient, new JavaNetHttpTransport(), attachmentSupport, generatedImageAttachmentWriter);
     }
 
     GoogleAiGenerateContentClient(
             @NonNull ChatCompletionClient fallbackClient,
-            @NonNull HttpClient httpClient,
+            @NonNull HttpTransport transport,
             @NonNull ProviderAttachmentSupport attachmentSupport,
             @NonNull GeneratedImageAttachmentWriter generatedImageAttachmentWriter
     ) {
         this.fallbackClient = fallbackClient;
-        this.httpClient = httpClient;
+        this.transport = transport;
         this.attachmentSupport = attachmentSupport;
         this.generatedImageAttachmentWriter = generatedImageAttachmentWriter;
     }
@@ -242,117 +235,72 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         if (shouldStop(isCancelled)) {
             return;
         }
-        HttpRequest request = HttpRequest.newBuilder(generateContentUri(runtime))
-                .timeout(REQUEST_TIMEOUT)
-                .header("Content-Type", "application/json")
-                .header("x-goog-api-key", runtime.apiKey())
-                .POST(HttpRequest.BodyPublishers.ofString(
-                        requestBody(projectionPlan, imageOutputModel, nativeWebSearch, reasoningLevel),
-                        StandardCharsets.UTF_8
-                ))
-                .build();
+        var request = new HttpExchangeRequest(
+                "POST",
+                generateContentUri(runtime),
+                java.util.Map.of(
+                        "Content-Type", "application/json",
+                        "x-goog-api-key", runtime.apiKey()
+                ),
+                HttpBody.utf8(requestBody(projectionPlan, imageOutputModel, nativeWebSearch, reasoningLevel)),
+                REQUEST_TIMEOUT,
+                MAX_RESPONSE_BYTES
+        );
         if (shouldStop(isCancelled)) {
             return;
         }
-        CompletableFuture<HttpResponse<byte[]>> future = httpClient.sendAsync(request, boundedBodyHandler());
-        if (registerActiveStream != null) {
-            try {
-                registerActiveStream.accept(() -> future.cancel(true));
-            } catch (RuntimeException | Error e) {
-                future.cancel(true);
-                if (clearActiveStream != null) {
-                    try {
-                        clearActiveStream.run();
-                    } catch (RuntimeException | Error clearFailure) {
-                        e.addSuppressed(clearFailure);
+        boolean clearHandled = false;
+        try (HttpCall call = transport.open(request)) {
+            if (registerActiveStream != null) {
+                try {
+                    registerActiveStream.accept(call);
+                } catch (RuntimeException | Error e) {
+                    call.close();
+                    clearHandled = true;
+                    if (clearActiveStream != null) {
+                        try {
+                            clearActiveStream.run();
+                        } catch (RuntimeException | Error clearFailure) {
+                            e.addSuppressed(clearFailure);
+                        }
                     }
+                    throw e;
                 }
-                throw e;
             }
-        }
 
-        try {
-            HttpResponse<byte[]> response = waitForResponse(future, isCancelled);
+            HttpExchangeResponse response = call.await(isCancelled);
             if (shouldStop(isCancelled)) {
                 return;
             }
             String responseBody = decodeResponseBody(response.body());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            if (!response.successful()) {
                 throw new IllegalStateException("Google AI request failed (%d): %s".formatted(
                         response.statusCode(),
                         errorMessage(responseBody)
                 ));
             }
-            {
-                JsonNode root = JSON.readTree(responseBody);
-                List<GoogleAiEmission> emissions = materializeGeneratedImages(
-                        responseEmissions(root, reasoningLevel, isCancelled),
-                        isCancelled
-                );
-                if (emissions.isEmpty() && shouldStop(isCancelled)) {
-                    return;
-                }
-                emitValidatedParts(emissions, onToken, onThinkingToken, onPart, isCancelled);
-                if (nativeWebSearch && onCitation != null) {
-                    for (CitationRef citation : citations(root)) {
-                        if (shouldStop(isCancelled)) {
-                            return;
-                        }
-                        onCitation.accept(citation);
+            GoogleAiApi.GenerateResponse body = JSON.read(responseBody, GoogleAiApi.GenerateResponse.class);
+            List<GoogleAiEmission> emissions = materializeGeneratedImages(
+                    responseEmissions(body, reasoningLevel, isCancelled),
+                    isCancelled
+            );
+            if (emissions.isEmpty() && shouldStop(isCancelled)) {
+                return;
+            }
+            emitValidatedParts(emissions, onToken, onThinkingToken, onPart, isCancelled);
+            if (nativeWebSearch && onCitation != null) {
+                for (CitationRef citation : citations(body)) {
+                    if (shouldStop(isCancelled)) {
+                        return;
                     }
+                    onCitation.accept(citation);
                 }
             }
         } finally {
-            if (!future.isDone()) {
-                future.cancel(true);
-            }
-            if (clearActiveStream != null) {
+            if (!clearHandled && clearActiveStream != null) {
                 clearActiveStream.run();
             }
         }
-    }
-
-    private HttpResponse<byte[]> waitForResponse(
-            CompletableFuture<HttpResponse<byte[]>> future,
-            BooleanSupplier isCancelled
-    ) throws Exception {
-        boolean logicalCancellation = false;
-        try {
-            while (true) {
-                if (isCancelled != null && isCancelled.getAsBoolean()) {
-                    logicalCancellation = true;
-                    future.cancel(true);
-                    throw new InterruptedException("Google AI request cancelled");
-                }
-                if (Thread.currentThread().isInterrupted()) {
-                    future.cancel(true);
-                    throw new InterruptedException("Google AI request interrupted");
-                }
-                try {
-                    return future.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException ignored) {
-                    // Poll logical cancellation while the HTTP request is in flight.
-                }
-            }
-        } catch (InterruptedException e) {
-            future.cancel(true);
-            if (!logicalCancellation) {
-                Thread.currentThread().interrupt();
-            }
-            throw e;
-        } catch (ExecutionException e) {
-            if (e.getCause() instanceof Exception exception) {
-                throw exception;
-            }
-            throw e;
-        }
-    }
-
-    private HttpResponse.BodyHandler<byte[]> boundedBodyHandler() {
-        return responseInfo -> {
-            long declaredLength = responseInfo.headers().firstValueAsLong("Content-Length").orElse(-1L);
-            return new BoundedBodySubscriber(declaredLength, MAX_RESPONSE_BYTES);
-        };
     }
 
     private String decodeResponseBody(byte[] bytes) throws CharacterCodingException {
@@ -410,87 +358,55 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             boolean includeImageResponse,
             boolean webSearchEnabled,
             ReasoningLevel reasoningLevel
-    ) throws Exception {
-        ObjectNode root = JSON.createObjectNode();
-        ArrayNode contents = JSON.createArrayNode();
-        ArrayNode systemParts = JSON.createArrayNode();
-
-        projectionPlan.messages().forEach(message -> {
-            if (message.role() == Role.SYSTEM) {
-                addMessageParts(systemParts, message);
-                return;
-            }
-            ObjectNode content = JSON.createObjectNode();
-            content.put("role", message.role() == Role.ASSISTANT ? "model" : "user");
-            ArrayNode parts = JSON.createArrayNode();
-            addMessageParts(parts, message);
-            content.set("parts", parts);
-            contents.add(content);
-        });
-
-        if (!systemParts.isEmpty()) {
-            ObjectNode systemInstruction = JSON.createObjectNode();
-            systemInstruction.set("parts", systemParts);
-            root.set("systemInstruction", systemInstruction);
-        }
-        root.set("contents", contents);
-
-        if (includeImageResponse || reasoningLevel.enabled()) {
-            ObjectNode generationConfig = root.putObject("generationConfig");
-            if (includeImageResponse) {
-                ArrayNode responseModalities = generationConfig.putArray("responseModalities");
-                responseModalities.add("TEXT");
-                responseModalities.add("IMAGE");
-            }
-            if (reasoningLevel.enabled()) {
-                generationConfig.putObject("thinkingConfig").put("includeThoughts", true);
-            }
-        }
-        if (webSearchEnabled) {
-            ArrayNode tools = JSON.createArrayNode();
-            ObjectNode googleSearchTool = JSON.createObjectNode();
-            googleSearchTool.set("google_search", JSON.createObjectNode());
-            tools.add(googleSearchTool);
-            root.set("tools", tools);
-        }
-        return JSON.writeValueAsString(root);
-    }
-
-    private void addMessageParts(ArrayNode parts, ProjectedMessage message) {
-        message.parts().stream()
+    ) {
+        List<GoogleAiApi.Part> systemParts = projectionPlan.messages().stream()
+                .filter(message -> message.role() == Role.SYSTEM)
+                .flatMap(message -> message.parts().stream())
                 .map(this::toGooglePart)
-                .filter(part -> part != null && !part.isEmpty())
-                .forEach(parts::add);
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        List<GoogleAiApi.Content> contents = projectionPlan.messages().stream()
+                .filter(message -> message.role() != Role.SYSTEM)
+                .map(message -> new GoogleAiApi.Content(
+                        message.role() == Role.ASSISTANT ? "model" : "user",
+                        message.parts().stream().map(this::toGooglePart).filter(java.util.Objects::nonNull).toList()
+                ))
+                .toList();
+        GoogleAiApi.GenerationConfig generationConfig = includeImageResponse || reasoningLevel.enabled()
+                ? new GoogleAiApi.GenerationConfig(
+                        includeImageResponse ? List.of("TEXT", "IMAGE") : null,
+                        reasoningLevel.enabled() ? new GoogleAiApi.ThinkingConfig(true) : null
+                )
+                : null;
+        var request = new GoogleAiApi.GenerateRequest(
+                systemParts.isEmpty() ? null : new GoogleAiApi.SystemInstruction(systemParts),
+                contents,
+                generationConfig,
+                webSearchEnabled ? List.of(new GoogleAiApi.Tool(new GoogleAiApi.GoogleSearch())) : null
+        );
+        return JSON.writeString(request);
     }
 
-    private ObjectNode toGooglePart(ProjectedPart part) {
+    private GoogleAiApi.Part toGooglePart(ProjectedPart part) {
         if (part instanceof NativeImage image) {
-            ObjectNode node = JSON.createObjectNode();
-            ObjectNode inlineData = JSON.createObjectNode();
-            inlineData.put("mime_type", image.mediaType());
-            inlineData.put("data", image.base64Data());
-            node.set("inline_data", inlineData);
-            return node;
+            return GoogleAiApi.Part.image(image.mediaType(), image.base64Data());
         }
         String text = AttachmentProjectionPlan.textFallback(part);
-        return StringUtils.isBlank(text) ? null : textPart(text);
-    }
-
-    private ObjectNode textPart(String text) {
-        ObjectNode node = JSON.createObjectNode();
-        node.put("text", StringUtils.defaultString(text));
-        return node;
+        return StringUtils.isBlank(text) ? null : GoogleAiApi.Part.text(text);
     }
 
     private List<GoogleAiEmission> responseEmissions(
-            JsonNode root,
+            GoogleAiApi.GenerateResponse body,
             ReasoningLevel reasoningLevel,
             BooleanSupplier isCancelled
     ) throws Exception {
-        validateCandidateFinishReason(root);
-        JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
-        if (!parts.isArray() || parts.isEmpty()) {
-            throw emptyOutput(root, "no candidate content parts");
+        validateCandidateFinishReason(body);
+        GoogleAiApi.Candidate candidate = firstCandidate(body);
+        List<GoogleAiApi.Part> parts = candidate == null || candidate.content() == null
+                ? emptyList()
+                : safeList(candidate.content().parts());
+        if (parts.isEmpty()) {
+            throw emptyOutput(body, "no candidate content parts");
         }
 
         List<GoogleAiEmission> emissions = new ArrayList<>();
@@ -498,12 +414,12 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         int thinkingParts = 0;
         int imageParts = 0;
         long decodedImageBytes = 0;
-        for (JsonNode part : parts) {
+        for (GoogleAiApi.Part part : parts) {
             if (shouldStop(isCancelled)) {
                 return emptyList();
             }
-            String text = part.path("text").asText("");
-            if (part.path("thought").asBoolean(false)) {
+            String text = StringUtils.defaultString(part.text());
+            if (Boolean.TRUE.equals(part.thought())) {
                 if (reasoningLevel.enabled() && StringUtils.isNotEmpty(text)) {
                     emissions.add(GoogleAiEmission.thinking(text));
                 }
@@ -516,15 +432,12 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                 continue;
             }
 
-            JsonNode inlineData = inlineData(part);
-            if (inlineData.isMissingNode()) {
+            GoogleAiApi.InlineData inlineData = part.inlineData();
+            if (inlineData == null) {
                 continue;
             }
-            String mimeType = StringUtils.defaultIfBlank(
-                    inlineData.path("mimeType").asText(""),
-                    inlineData.path("mime_type").asText("")
-            );
-            String data = inlineData.path("data").asText("");
+            String mimeType = StringUtils.defaultString(inlineData.mimeType());
+            String data = StringUtils.defaultString(inlineData.data());
             if (!mimeType.toLowerCase(Locale.ROOT).startsWith("image/")) {
                 log.warn("Google AI returned unsupported inline response data");
                 emissions.add(GoogleAiEmission.token(UNSUPPORTED_INLINE_DATA_WARNING));
@@ -543,7 +456,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
 
         if (emittedParts == 0) {
             throw emptyOutput(
-                    root,
+                    body,
                     thinkingParts > 0 ? "only thinking parts, no answer text" : "no usable text or image parts"
             );
         }
@@ -551,15 +464,15 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         return List.copyOf(emissions);
     }
 
-    private void validateCandidateFinishReason(JsonNode root) {
-        String finishReason = StringUtils.trimToEmpty(
-                root.path("candidates").path(0).path("finishReason").asText("")
-        ).toUpperCase(Locale.ROOT);
+    private void validateCandidateFinishReason(GoogleAiApi.GenerateResponse body) {
+        GoogleAiApi.Candidate candidate = firstCandidate(body);
+        String finishReason = StringUtils.trimToEmpty(candidate == null ? null : candidate.finishReason())
+                .toUpperCase(Locale.ROOT);
         if (finishReason.isEmpty() || SUCCESSFUL_FINISH_REASONS.contains(finishReason)) {
             return;
         }
         throw new IllegalStateException(
-                "Google AI did not complete generateContent successfully%s.".formatted(outputDiagnostics(root))
+                "Google AI did not complete generateContent successfully%s.".formatted(outputDiagnostics(body))
         );
     }
 
@@ -723,27 +636,35 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         refs.forEach(generatedImageAttachmentWriter::discard);
     }
 
-    private EmptyGoogleAiOutputException emptyOutput(JsonNode root, String reason) {
+    private EmptyGoogleAiOutputException emptyOutput(GoogleAiApi.GenerateResponse body, String reason) {
         return new EmptyGoogleAiOutputException(
-                "Google AI returned no generateContent output (%s%s).".formatted(reason, outputDiagnostics(root))
+                "Google AI returned no generateContent output (%s%s).".formatted(reason, outputDiagnostics(body))
         );
     }
 
-    private String outputDiagnostics(JsonNode root) {
+    private String outputDiagnostics(GoogleAiApi.GenerateResponse body) {
         List<String> diagnostics = new ArrayList<>();
-        addDiagnostic(diagnostics, "promptBlockReason", root.path("promptFeedback").path("blockReason").asText(""));
-        JsonNode candidate = root.path("candidates").path(0);
-        addDiagnostic(diagnostics, "finishReason", candidate.path("finishReason").asText(""));
-        addDiagnostic(diagnostics, "finishMessage", candidate.path("finishMessage").asText(""));
-        addDiagnostic(diagnostics, "modelStatus", root.path("modelStatus").path("message").asText(""));
+        addDiagnostic(
+                diagnostics,
+                "promptBlockReason",
+                body == null || body.promptFeedback() == null ? "" : body.promptFeedback().blockReason()
+        );
+        GoogleAiApi.Candidate candidate = firstCandidate(body);
+        addDiagnostic(diagnostics, "finishReason", candidate == null ? "" : candidate.finishReason());
+        addDiagnostic(diagnostics, "finishMessage", candidate == null ? "" : candidate.finishMessage());
+        addDiagnostic(
+                diagnostics,
+                "modelStatus",
+                body == null || body.modelStatus() == null ? "" : body.modelStatus().message()
+        );
 
-        JsonNode usage = root.path("usageMetadata");
-        if (!usage.isMissingNode() && !usage.isEmpty()) {
+        GoogleAiApi.UsageMetadata usage = body == null ? null : body.usageMetadata();
+        if (usage != null) {
             diagnostics.add("tokens prompt=%d candidates=%d thoughts=%d total=%d".formatted(
-                    usage.path("promptTokenCount").asInt(0),
-                    usage.path("candidatesTokenCount").asInt(0),
-                    usage.path("thoughtsTokenCount").asInt(0),
-                    usage.path("totalTokenCount").asInt(0)
+                    zeroIfNull(usage.promptTokenCount()),
+                    zeroIfNull(usage.candidatesTokenCount()),
+                    zeroIfNull(usage.thoughtsTokenCount()),
+                    zeroIfNull(usage.totalTokenCount())
             ));
         }
 
@@ -759,58 +680,41 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         }
     }
 
-    private JsonNode inlineData(JsonNode part) {
-        JsonNode inlineData = part.path("inlineData");
-        return inlineData.isMissingNode() ? part.path("inline_data") : inlineData;
-    }
-
-    private List<CitationRef> citations(JsonNode root) {
-        JsonNode candidate = root.path("candidates").path(0);
-        JsonNode groundingMetadata = candidate.path("groundingMetadata");
-        JsonNode groundingChunks = groundingMetadata.path("groundingChunks");
-        if (!groundingChunks.isArray() || groundingChunks.isEmpty()) {
+    private List<CitationRef> citations(GoogleAiApi.GenerateResponse body) {
+        GoogleAiApi.Candidate candidate = firstCandidate(body);
+        GoogleAiApi.GroundingMetadata grounding = candidate == null ? null : candidate.groundingMetadata();
+        List<GoogleAiApi.GroundingChunk> chunks = grounding == null
+                ? emptyList()
+                : safeList(grounding.groundingChunks());
+        if (chunks.isEmpty()) {
             return emptyList();
         }
 
         CitationAccumulator citationAccumulator = new CitationAccumulator();
         List<CitationRef> citations = new ArrayList<>();
-        for (int i = 0; i < groundingChunks.size(); i++) {
-            JsonNode web = groundingChunks.path(i).path("web");
-            String uri = web.path("uri").asText("");
-            String title = web.path("title").asText("");
-            String citedText = citedTextForGroundingChunk(groundingMetadata.path("groundingSupports"), i);
-            UrlCitationMapper.fromUrl(title, uri, citedText)
+        for (int index = 0; index < chunks.size(); index++) {
+            GoogleAiApi.WebSource web = chunks.get(index) == null ? null : chunks.get(index).web();
+            if (web == null) {
+                continue;
+            }
+            String citedText = citedTextForGroundingChunk(safeList(grounding.groundingSupports()), index);
+            UrlCitationMapper.fromUrl(web.title(), web.uri(), citedText)
                     .flatMap(citationAccumulator::addNew)
                     .ifPresent(citations::add);
         }
         return List.copyOf(citations);
     }
 
-    private String citedTextForGroundingChunk(JsonNode groundingSupports, int chunkIndex) {
-        if (!groundingSupports.isArray()) {
-            return "";
-        }
-
-        for (JsonNode support : groundingSupports) {
-            JsonNode indices = support.path("groundingChunkIndices");
-            if (!indices.isArray() || !containsIndex(indices, chunkIndex)) {
-                continue;
-            }
-            String segmentText = support.path("segment").path("text").asText("");
-            if (StringUtils.isNotBlank(segmentText)) {
-                return segmentText;
-            }
-        }
-        return "";
-    }
-
-    private boolean containsIndex(JsonNode indices, int expectedIndex) {
-        for (JsonNode index : indices) {
-            if (index.asInt(-1) == expectedIndex) {
-                return true;
-            }
-        }
-        return false;
+    private String citedTextForGroundingChunk(List<GoogleAiApi.GroundingSupport> supports, int chunkIndex) {
+        return supports.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(support -> safeList(support.groundingChunkIndices()).contains(chunkIndex))
+                .map(GoogleAiApi.GroundingSupport::segment)
+                .filter(java.util.Objects::nonNull)
+                .map(GoogleAiApi.Segment::text)
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse("");
     }
 
     private String errorMessage(String body) {
@@ -818,8 +722,8 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             return "empty error response";
         }
         try {
-            JsonNode root = JSON.readTree(body);
-            String message = root.path("error").path("message").asText("");
+            GoogleAiApi.ErrorEnvelope envelope = JSON.read(body, GoogleAiApi.ErrorEnvelope.class);
+            String message = envelope.error() == null ? "" : envelope.error().message();
             if (StringUtils.isNotBlank(message)) {
                 String normalized = BoundedUtf8.presentation(message, 256, 1_024);
                 if (StringUtils.isNotBlank(normalized)) {
@@ -832,69 +736,16 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         return "unrecognized error response";
     }
 
-    static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
-        private final long maximumBytes;
-        private final ByteArrayOutputStream output;
-        private final CompletableFuture<byte[]> body = new CompletableFuture<>();
-        private final boolean declaredTooLarge;
-        private Flow.Subscription subscription;
-        private long received;
+    private GoogleAiApi.Candidate firstCandidate(GoogleAiApi.GenerateResponse body) {
+        return body == null || safeList(body.candidates()).isEmpty() ? null : body.candidates().getFirst();
+    }
 
-        BoundedBodySubscriber(long declaredLength, long maximumBytes) {
-            this.maximumBytes = maximumBytes;
-            declaredTooLarge = declaredLength > maximumBytes;
-            int initialCapacity = declaredLength > 0 && declaredLength <= maximumBytes
-                    ? (int) declaredLength
-                    : 8192;
-            output = new ByteArrayOutputStream(initialCapacity);
-        }
+    private <T> List<T> safeList(List<T> values) {
+        return values == null ? emptyList() : values;
+    }
 
-        @Override
-        public CompletionStage<byte[]> getBody() {
-            return body;
-        }
-
-        @Override
-        public void onSubscribe(Flow.Subscription subscription) {
-            this.subscription = subscription;
-            if (declaredTooLarge) {
-                subscription.cancel();
-                body.completeExceptionally(new IOException("Google AI response exceeded the response byte limit."));
-                return;
-            }
-            subscription.request(Long.MAX_VALUE);
-        }
-
-        @Override
-        public void onNext(List<ByteBuffer> buffers) {
-            if (body.isDone()) {
-                return;
-            }
-            for (ByteBuffer buffer : buffers) {
-                int remaining = buffer.remaining();
-                if (received + remaining > maximumBytes) {
-                    subscription.cancel();
-                    body.completeExceptionally(new IOException("Google AI response exceeded the response byte limit."));
-                    return;
-                }
-                byte[] chunk = new byte[remaining];
-                buffer.get(chunk);
-                output.writeBytes(chunk);
-                received += remaining;
-            }
-        }
-
-        @Override
-        public void onError(Throwable throwable) {
-            body.completeExceptionally(throwable);
-        }
-
-        @Override
-        public void onComplete() {
-            if (!body.isDone()) {
-                body.complete(output.toByteArray());
-            }
-        }
+    private int zeroIfNull(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private boolean shouldStop(BooleanSupplier isCancelled) {

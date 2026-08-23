@@ -90,7 +90,7 @@ class CodexAuthResolverTest {
         Path userHome = tempDir.resolve("home");
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
 
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         assertThat(subject.isOAuthClientConfigured()).isTrue();
     }
@@ -99,7 +99,7 @@ class CodexAuthResolverTest {
     @DisplayName("Resolver reports unauthorized when no stored Chat4J token exists")
     void resolveStatus_whenNoStoredToken_returnsUnauthorized() {
         Path userHome = tempDir.resolve("home");
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         var status = subject.resolveStatus();
 
@@ -119,7 +119,7 @@ class CodexAuthResolverTest {
                   "expiresAtEpochMs": 1
                 }
                 """);
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         assertThat(subject.resolveBearerTokenOrNull()).isNull();
     }
@@ -135,7 +135,7 @@ class CodexAuthResolverTest {
                   "accessToken": "eyJhbGciOiJub25lIn0.eyJleHAiOjF9.signature"
                 }
                 """);
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         assertThat(subject.resolveBearerTokenOrNull()).isNull();
         assertThat(subject.resolveStatus().authorized()).isFalse();
@@ -164,7 +164,7 @@ class CodexAuthResolverTest {
                 any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
         )).thenReturn(response);
-        var subject = new CodexAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
 
         assertThat(subject.resolveBearerTokenOrNull()).isEqualTo("DUMMY_CODEX_UPGRADED_ACCESS_TOKEN");
         assertThat(tokenFile)
@@ -181,7 +181,7 @@ class CodexAuthResolverTest {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         System.setProperty(OAUTH_SCOPES_PROPERTY, "openid profile email offline_access");
 
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
@@ -203,7 +203,7 @@ class CodexAuthResolverTest {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
 
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
@@ -218,7 +218,7 @@ class CodexAuthResolverTest {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:%d/auth/callback".formatted(freePort()));
 
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
         CodexAuthResolver.CodexCallbackWait callbackWait = subject.startCallbackWait(challenge);
 
@@ -244,7 +244,7 @@ class CodexAuthResolverTest {
     void startCallbackWait_whenBrowserRedirectOmitsState_returnsBadRequest() throws Exception {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:%d/auth/callback".formatted(freePort()));
-        var subject = new CodexAuthResolver(tempDir.resolve("callback-state-home"), emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(tempDir.resolve("callback-state-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
         CodexAuthResolver.CodexCallbackWait callbackWait = subject.startCallbackWait(challenge);
 
@@ -295,7 +295,7 @@ class CodexAuthResolverTest {
             System.setProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY, "1");
             System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
 
-            var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+            var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
             CodexAuthResolver.CodexAuthActionResult result = subject.login(
                     () -> false,
@@ -354,7 +354,7 @@ class CodexAuthResolverTest {
             System.setProperty(OAUTH_ISSUER_PROPERTY, "http://127.0.0.1:%d".formatted(server.getAddress().getPort()));
             System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
             System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
-            var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+            var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
             CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
             String input = "%s?code=auth-code-123&state=%s".formatted(challenge.redirectUri(), challenge.state());
             worker = Thread.startVirtualThread(() -> result.set(
@@ -404,7 +404,7 @@ class CodexAuthResolverTest {
             requestTimeouts.add(request.timeout().orElseThrow());
             return requestCount.incrementAndGet() == 1 ? tokenResponse : exchangeFailure;
         });
-        var subject = new CodexAuthResolver(tempDir.resolve("bounded-exchange-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("bounded-exchange-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
         String input = "%s?code=auth-code-123&state=%s".formatted(challenge.redirectUri(), challenge.state());
 
@@ -434,7 +434,7 @@ class CodexAuthResolverTest {
             awaitDeadline(deadline.get());
             throw new HttpTimeoutException("request timed out");
         });
-        var subject = new CodexAuthResolver(tempDir.resolve("exchange-timeout-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("exchange-timeout-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge activeChallenge = subject.beginLogin();
         long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
         deadline.set(deadlineNanos);
@@ -479,7 +479,7 @@ class CodexAuthResolverTest {
                 any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
         )).thenAnswer(invocation -> requestCount.incrementAndGet() == 1 ? tokenResponse : exchangeFailure);
-        var subject = new CodexAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge activeChallenge = subject.beginLogin();
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
         var expiringChallenge = new CodexAuthResolver.CodexLoginChallenge(
@@ -560,7 +560,7 @@ class CodexAuthResolverTest {
             }
             return exchangeFailure;
         });
-        var subject = new CodexAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
         var cancelled = new AtomicBoolean();
         var finalCancellationCheck = new CountDownLatch(1);
         var checksAfterExchange = new AtomicInteger();
@@ -606,7 +606,7 @@ class CodexAuthResolverTest {
     @DisplayName("Authorization input exceptions cannot expose challenge secrets in logs or results")
     void login_whenInputProviderIncludesSecretsInException_sanitizesDiagnostics() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
-        var subject = new CodexAuthResolver(tempDir.resolve("diagnostic-home"), emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(tempDir.resolve("diagnostic-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
         Logger logger = (Logger) LoggerFactory.getLogger(CodexAuthResolver.class);
         var appender = new ListAppender<ILoggingEvent>();
         appender.start();
@@ -641,7 +641,7 @@ class CodexAuthResolverTest {
     void completeLoginWithAuthorizationInput_whenCallbackStateMissing_returnsFailure() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         HttpClient httpClient = mock(HttpClient.class);
-        var subject = new CodexAuthResolver(tempDir.resolve("missing-state-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("missing-state-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
         CodexAuthResolver.CodexAuthActionResult result = subject.completeLoginWithAuthorizationInput(
@@ -660,7 +660,7 @@ class CodexAuthResolverTest {
     void completeLoginWithAuthorizationInput_whenCallbackStateMismatches_returnsFailure() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         HttpClient httpClient = mock(HttpClient.class);
-        var subject = new CodexAuthResolver(tempDir.resolve("mismatched-state-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("mismatched-state-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
         CodexAuthResolver.CodexAuthActionResult result = subject.completeLoginWithAuthorizationInput(
@@ -679,7 +679,7 @@ class CodexAuthResolverTest {
     void completeLoginWithAuthorizationInput_whenCallbackContainsOnlyError_returnsFailure() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         HttpClient httpClient = mock(HttpClient.class);
-        var subject = new CodexAuthResolver(tempDir.resolve("callback-error-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("callback-error-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
         CodexAuthResolver.CodexAuthActionResult result = subject.completeLoginWithAuthorizationInput(
@@ -697,7 +697,7 @@ class CodexAuthResolverTest {
     void completeLoginWithAuthorizationInput_whenCallbackUrlIsMalformed_returnsFailure() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         HttpClient httpClient = mock(HttpClient.class);
-        var subject = new CodexAuthResolver(tempDir.resolve("malformed-callback-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("malformed-callback-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
         CodexAuthResolver.CodexAuthActionResult malformedHierarchicalUrl = subject.completeLoginWithAuthorizationInput(
@@ -721,7 +721,7 @@ class CodexAuthResolverTest {
     void completeLoginWithAuthorizationInput_whenChallengeExpired_returnsTimeoutWithoutExchange() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         HttpClient httpClient = mock(HttpClient.class);
-        var subject = new CodexAuthResolver(tempDir.resolve("expired-challenge-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("expired-challenge-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge activeChallenge = subject.beginLogin();
         var expiredChallenge = new CodexAuthResolver.CodexLoginChallenge(
                 activeChallenge.codeVerifier(),
@@ -756,7 +756,7 @@ class CodexAuthResolverTest {
                 OAUTH_REDIRECT_URI_PROPERTY,
                 "http://localhost:1459/auth/callback?sentinel-secret=must-not-leak"
         );
-        var subject = new CodexAuthResolver(tempDir.resolve("missing-input-home"), emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(tempDir.resolve("missing-input-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CodexAuthResolver.CodexAuthActionResult result = subject.login(() -> false, challenge -> "");
 
@@ -779,7 +779,7 @@ class CodexAuthResolverTest {
                 any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
         )).thenReturn(response);
-        var subject = new CodexAuthResolver(tempDir.resolve("raw-code-home"), emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(tempDir.resolve("raw-code-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
 
         CodexAuthResolver.CodexAuthActionResult result = subject.completeLoginWithAuthorizationInput(
@@ -799,7 +799,7 @@ class CodexAuthResolverTest {
         var inputRequested = new CountDownLatch(1);
         var releaseInput = new CountDownLatch(1);
         var loginResult = new AtomicReference<CodexAuthResolver.CodexAuthActionResult>();
-        var subject = new CodexAuthResolver(tempDir.resolve("operation-guard-home"), emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(tempDir.resolve("operation-guard-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
         Thread loginThread = Thread.startVirtualThread(() -> loginResult.set(subject.login(
                 () -> false,
                 challenge -> {
@@ -830,7 +830,7 @@ class CodexAuthResolverTest {
     @DisplayName("Login challenge diagnostics mask PKCE state and authorization query values")
     void toString_whenChallengeIsRendered_masksOAuthSecrets() {
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
-        var subject = new CodexAuthResolver(tempDir.resolve("diagnostics-home"), emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(tempDir.resolve("diagnostics-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
         String rendered = challenge.toString();
@@ -877,7 +877,7 @@ class CodexAuthResolverTest {
             releaseRefresh.await(2, TimeUnit.SECONDS);
             return response;
         });
-        var subject = new CodexAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
         ReentrantLock mutationLock = authFileMutationLock(subject);
         var logoutResult = new AtomicReference<CodexAuthResolver.CodexAuthActionResult>();
         var logoutFinished = new CountDownLatch(1);
@@ -920,7 +920,7 @@ class CodexAuthResolverTest {
         var subject = new CodexAuthResolver(
                 tempDir.resolve("cancelled-logout-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         );
 
         CodexAuthResolver.CodexAuthActionResult result = subject.logout(() -> true);
@@ -936,7 +936,7 @@ class CodexAuthResolverTest {
         Path tokenPath = userHome.resolve(".config/chat4j/codex-auth.json");
         Files.createDirectories(tokenPath);
         Files.writeString(tokenPath.resolve("preserve.txt"), "not an auth file");
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CodexAuthResolver.CodexAuthActionResult result = subject.logout();
 
@@ -959,7 +959,7 @@ class CodexAuthResolverTest {
                 }
                 """);
 
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         var status = subject.resolveStatus();
 
@@ -1002,7 +1002,7 @@ class CodexAuthResolverTest {
                 }
                 """);
 
-        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CodexAuthResolver.CodexAuthActionResult result = subject.logout();
 

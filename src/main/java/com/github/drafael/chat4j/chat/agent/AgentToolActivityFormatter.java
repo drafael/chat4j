@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.chat.agent;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
@@ -11,7 +10,7 @@ import java.util.stream.StreamSupport;
 
 final class AgentToolActivityFormatter {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final int MAX_SUMMARY_CHARS = 180;
     private static final int MAX_MESSAGE_CHARS = 120;
 
@@ -102,8 +101,8 @@ final class AgentToolActivityFormatter {
         }
 
         try {
-            Map<String, Object> arguments = JSON.readValue(argumentsJson, new TypeReference<>() {
-            });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> arguments = JSON.read(argumentsJson, Map.class);
             return arguments == null ? new LinkedHashMap<>() : arguments;
         } catch (Exception e) {
             return new LinkedHashMap<>();

@@ -2,8 +2,13 @@ package com.github.drafael.chat4j.provider.support;
 
 import static java.util.Collections.emptyMap;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.SecureFileStore;
 import com.sun.net.httpserver.HttpServer;
 import java.io.InputStream;
@@ -11,9 +16,6 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,7 +40,7 @@ import org.apache.commons.lang3.Strings;
 @Slf4j
 public class CodexAuthResolver {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private static final String CHAT4J_AUTH_FILENAME = "codex-auth.json";
@@ -72,7 +74,7 @@ public class CodexAuthResolver {
 
     private final Path userHome;
     private final Map<String, String> environment;
-    private final HttpClient httpClient;
+    private final HttpTransport transport;
     private final AtomicBoolean explicitAuthOperationInProgress = new AtomicBoolean();
     private final ReentrantLock authFileMutationLock = new ReentrantLock();
 
@@ -80,18 +82,18 @@ public class CodexAuthResolver {
         this(
                 Path.of(System.getProperty("user.home")),
                 System.getenv(),
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()
+                JavaNetHttpTransport.create(Duration.ofSeconds(3), RedirectPolicy.NEVER)
         );
     }
 
     public CodexAuthResolver(
             @NonNull Path userHome,
             @NonNull Map<String, String> environment,
-            @NonNull HttpClient httpClient
+            @NonNull HttpTransport transport
     ) {
         this.userHome = userHome;
         this.environment = Map.copyOf(environment);
-        this.httpClient = httpClient;
+        this.transport = transport;
     }
 
     public String resolveBearerToken() {
@@ -116,17 +118,20 @@ public class CodexAuthResolver {
                 return null;
             }
 
-            JsonNode root = JSON.readTree(tokenFile.toFile());
-            String token = normalizeToken(root.path("accessToken").asText(""));
+            CodexAuthApi.StoredToken stored = JSON.read(
+                    Files.readAllBytes(tokenFile),
+                    CodexAuthApi.StoredToken.class
+            );
+            String token = normalizeToken(stored.accessToken());
             if (StringUtils.isBlank(token)) {
                 return null;
             }
 
-            String oauthScopes = root.path("oauthScopes").asText("");
-            long expiresAtEpochMs = root.path("expiresAtEpochMs").asLong(0L);
-            String refreshToken = StringUtils.trimToNull(root.path("refreshToken").asText(""));
+            String oauthScopes = StringUtils.defaultString(stored.oauthScopes());
+            long expiresAtEpochMs = stored.expiresAtEpochMs() == null ? 0L : stored.expiresAtEpochMs();
+            String refreshToken = StringUtils.trimToNull(stored.refreshToken());
             if (looksLikeJwtToken(token)) {
-                JsonNode payload = decodeJwtPayload(token);
+                CodexAuthApi.JwtClaims payload = decodeJwtPayload(token);
                 long jwtExpiresAtEpochMs = payload == null ? 0L : extractJwtExpiryEpochMs(payload);
                 if (jwtExpiresAtEpochMs > 0L) {
                     expiresAtEpochMs = expiresAtEpochMs > 0L
@@ -470,24 +475,16 @@ public class CodexAuthResolver {
                         urlEncode(codeVerifier)
                 );
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(oauthTokenEndpoint()))
-                .timeout(requestTimeout)
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+        HttpExchangeResponse response = sendTokenRequest(formBody, requestTimeout, null);
+        if (!response.successful()) {
             throw new IllegalStateException("OAuth token exchange failed with HTTP %d".formatted(response.statusCode()));
         }
 
-        JsonNode root = JSON.readTree(response.body());
-        String idToken = StringUtils.trimToNull(root.path("id_token").asText(""));
-        String accessToken = normalizeToken(root.path("access_token").asText(""));
-        String refreshToken = StringUtils.trimToNull(root.path("refresh_token").asText(""));
-        int expiresInSeconds = parseIntegerNode(root.path("expires_in"), 0);
+        CodexAuthApi.TokenResponse body = JSON.read(response.body(), CodexAuthApi.TokenResponse.class);
+        String idToken = StringUtils.trimToNull(body.idToken());
+        String accessToken = normalizeToken(body.accessToken());
+        String refreshToken = StringUtils.trimToNull(body.refreshToken());
+        int expiresInSeconds = parseIntegerValue(body.expiresIn(), 0);
 
         if (StringUtils.isBlank(idToken) && StringUtils.isBlank(accessToken)) {
             throw new IllegalStateException("OAuth token exchange response was incomplete");
@@ -529,27 +526,19 @@ public class CodexAuthResolver {
                             urlEncode(clientId)
                     );
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(oauthTokenEndpoint()))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            HttpExchangeResponse response = sendTokenRequest(formBody, Duration.ofSeconds(10), null);
+            if (!response.successful()) {
                 return null;
             }
 
-            JsonNode root = JSON.readTree(response.body());
-            String refreshedAccess = normalizeToken(root.path("access_token").asText(""));
+            CodexAuthApi.TokenResponse body = JSON.read(response.body(), CodexAuthApi.TokenResponse.class);
+            String refreshedAccess = normalizeToken(body.accessToken());
             if (StringUtils.isBlank(refreshedAccess)) {
                 return null;
             }
 
-            String refreshedRefresh = StringUtils.trimToNull(root.path("refresh_token").asText(""));
-            int expiresInSeconds = parseIntegerNode(root.path("expires_in"), 0);
+            String refreshedRefresh = StringUtils.trimToNull(body.refreshToken());
+            int expiresInSeconds = parseIntegerValue(body.expiresIn(), 0);
             long expiresAtEpochMs = resolveExpiresAtEpochMs(expiresInSeconds);
 
             String resolvedToken = StringUtils.defaultIfBlank(
@@ -646,21 +635,13 @@ public class CodexAuthResolver {
                             urlEncode(subjectTokenType)
                     );
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(oauthTokenEndpoint()))
-                    .timeout(requestTimeout)
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            HttpExchangeResponse response = sendTokenRequest(formBody, requestTimeout, null);
+            if (!response.successful()) {
                 return null;
             }
 
-            JsonNode root = JSON.readTree(response.body());
-            return normalizeToken(root.path("access_token").asText(""));
+            CodexAuthApi.TokenResponse body = JSON.read(response.body(), CodexAuthApi.TokenResponse.class);
+            return normalizeToken(body.accessToken());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
@@ -687,15 +668,15 @@ public class CodexAuthResolver {
     ) throws Exception {
         Path tokenFile = chat4jAuthFile();
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("accessToken", token);
-        payload.put("refreshToken", StringUtils.trimToNull(refreshToken));
-        payload.put("expiresAtEpochMs", expiresAtEpochMs > 0 ? expiresAtEpochMs : null);
-        payload.put("updatedAtEpochMs", System.currentTimeMillis());
-        payload.put("source", CHAT4J_TOKEN_SOURCE);
-        payload.put("oauthScopes", StringUtils.defaultString(oauthScopes));
-
-        String content = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
+        var payload = new CodexAuthApi.StoredToken(
+                token,
+                StringUtils.trimToNull(refreshToken),
+                expiresAtEpochMs > 0 ? expiresAtEpochMs : null,
+                System.currentTimeMillis(),
+                CHAT4J_TOKEN_SOURCE,
+                StringUtils.defaultString(oauthScopes)
+        );
+        String content = JSON.writePrettyString(payload);
 
         if (cancellationRequested == null) {
             authFileMutationLock.lock();
@@ -711,6 +692,27 @@ public class CodexAuthResolver {
         } finally {
             authFileMutationLock.unlock();
         }
+    }
+
+    private HttpExchangeResponse sendTokenRequest(
+            String formBody,
+            Duration timeout,
+            BooleanSupplier cancellationRequested
+    ) throws Exception {
+        return transport.send(
+                new HttpExchangeRequest(
+                        "POST",
+                        URI.create(oauthTokenEndpoint()),
+                        Map.of(
+                                "Accept", "application/json",
+                                "Content-Type", "application/x-www-form-urlencoded"
+                        ),
+                        HttpBody.utf8(formBody),
+                        timeout,
+                        0
+                ),
+                cancellationRequested
+        );
     }
 
     private String createAuthorizationUri(
@@ -996,7 +998,7 @@ public class CodexAuthResolver {
         return firstDot > 0 && secondDot > firstDot;
     }
 
-    private JsonNode decodeJwtPayload(String token) {
+    private CodexAuthApi.JwtClaims decodeJwtPayload(String token) {
         try {
             String[] parts = token.split("\\.");
             if (parts.length != 3) {
@@ -1004,14 +1006,14 @@ public class CodexAuthResolver {
             }
 
             byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
-            return JSON.readTree(decoded);
+            return JSON.read(decoded, CodexAuthApi.JwtClaims.class);
         } catch (Exception e) {
             return null;
         }
     }
 
-    private long extractJwtExpiryEpochMs(JsonNode payload) {
-        long exp = payload.path("exp").asLong(0L);
+    private long extractJwtExpiryEpochMs(CodexAuthApi.JwtClaims payload) {
+        long exp = parseLongValue(payload.exp(), 0L);
         if (exp <= 0) {
             return 0L;
         }
@@ -1117,23 +1119,31 @@ public class CodexAuthResolver {
         }
     }
 
-    private int parseIntegerNode(JsonNode node, int defaultValue) {
-        if (node == null || node.isMissingNode() || node.isNull()) {
-            return defaultValue;
+    private int parseIntegerValue(Object value, int defaultValue) {
+        if (value instanceof Number number) {
+            return number.intValue();
         }
-
-        if (node.isInt() || node.isLong()) {
-            return node.asInt(defaultValue);
-        }
-
-        if (node.isTextual()) {
+        if (value instanceof String text) {
             try {
-                return Integer.parseInt(node.asText(""));
-            } catch (Exception e) {
+                return Integer.parseInt(text);
+            } catch (NumberFormatException e) {
                 return defaultValue;
             }
         }
+        return defaultValue;
+    }
 
+    private long parseLongValue(Object value, long defaultValue) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException e) {
+                return defaultValue;
+            }
+        }
         return defaultValue;
     }
 

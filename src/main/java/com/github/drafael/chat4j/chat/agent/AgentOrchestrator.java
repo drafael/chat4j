@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.chat.agent;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.mcp.McpInvocationTarget;
 import com.github.drafael.chat4j.mcp.McpRunProvider;
 import com.github.drafael.chat4j.mcp.McpRunSession;
@@ -27,7 +26,7 @@ import static java.util.stream.Stream.concat;
 @Slf4j
 @RequiredArgsConstructor
 public final class AgentOrchestrator {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final int MAX_TOOL_ROUNDS = 8;
     private static final int LOOP_GUARD_REPEAT_THRESHOLD = 3;
     private static final Set<String> LOOP_GUARD_TOOL_NAMES = Set.of("ls", "find", "grep", "read");
@@ -247,8 +246,9 @@ public final class AgentOrchestrator {
     ) {
         Map<String, Object> arguments;
         try {
-            arguments = JSON.readValue(toolInvocation.argumentsJson(), new TypeReference<>() {
-            });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> decoded = JSON.read(toolInvocation.argumentsJson(), Map.class);
+            arguments = decoded;
             if (arguments == null) {
                 throw new IllegalArgumentException("MCP tool arguments must be a JSON object.");
             }
@@ -265,7 +265,7 @@ public final class AgentOrchestrator {
             try {
                 formattedArguments = AgentToolResultLimiter.limit(mcpSession.redactForDisplay(
                         toolInvocation.name(),
-                        JSON.writerWithDefaultPrettyPrinter().writeValueAsString(arguments)
+                        JSON.writePrettyString(arguments)
                 ));
             } catch (Exception e) {
                 return ToolInvocationResult.failure(toolInvocation, "Could not display MCP tool arguments.");

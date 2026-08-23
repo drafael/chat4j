@@ -1,20 +1,17 @@
 package com.github.drafael.chat4j.stt.provider.assemblyai;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.HttpBody;
 import java.net.URI;
-import java.net.http.HttpRequest;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -38,20 +35,20 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
     private static final Duration DEFAULT_SLEEP_INCREMENT = Duration.ofMillis(250);
     private static final Duration MIN_POLLING_DEADLINE = Duration.ofMinutes(2);
     private static final Duration MAX_POLLING_DEADLINE = Duration.ofMinutes(15);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
-    private final SttHttpTransport transport;
+    private final HttpTransport transport;
     private final Clock clock;
     private final Sleeper sleeper;
     private final Duration pollInterval;
     private final Duration sleepIncrement;
 
-    public AssemblyAiSpeechToTextProvider(SttHttpTransport transport) {
+    public AssemblyAiSpeechToTextProvider(HttpTransport transport) {
         this(transport, Clock.systemUTC(), duration -> Thread.sleep(duration.toMillis()), DEFAULT_POLL_INTERVAL, DEFAULT_SLEEP_INCREMENT);
     }
 
     AssemblyAiSpeechToTextProvider(
-            SttHttpTransport transport,
+            HttpTransport transport,
             Clock clock,
             Sleeper sleeper,
             Duration pollInterval,
@@ -141,15 +138,15 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
 
     private String uploadAudio(SpeechToTextRequest request, SpeechToTextProviderContext context, String apiKey) throws Exception {
         AssemblyAiSttEndpointResolver.Endpoint endpoint = AssemblyAiSttEndpointResolver.resolve(context.baseUri());
-        SttHttpRequest httpRequest = new SttHttpRequest(
+        HttpExchangeRequest httpRequest = new HttpExchangeRequest(
                 "POST",
                 endpoint.uploadUri(),
                 audioHeaders(apiKey),
-                HttpRequest.BodyPublishers.ofFile(request.audioFile()),
+                HttpBody.file(request.audioFile()),
                 context.timeout(),
                 SMALL_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(httpRequest, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(httpRequest, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException(errorMessage("upload", response, context));
         }
@@ -157,21 +154,20 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private String submitTranscript(SpeechToTextRequest request, SpeechToTextProviderContext context, String apiKey, String uploadUrl) throws Exception {
-        ObjectNode json = OBJECT_MAPPER.createObjectNode();
-        json.put("audio_url", uploadUrl);
         String modelId = normalizeModelId(request.modelId());
-        if (!Strings.CS.equals(modelId, AssemblyAiSpeechToTextModels.DEFAULT_MODEL_ID)) {
-            json.putArray("speech_models").add(modelId);
-        }
-        SttHttpRequest httpRequest = new SttHttpRequest(
+        List<String> speechModels = Strings.CS.equals(modelId, AssemblyAiSpeechToTextModels.DEFAULT_MODEL_ID)
+                ? null
+                : List.of(modelId);
+        var requestBody = new AssemblyAiSttApi.CreateTranscriptRequest(uploadUrl, speechModels);
+        HttpExchangeRequest httpRequest = new HttpExchangeRequest(
                 "POST",
                 AssemblyAiSttEndpointResolver.resolve(context.baseUri()).transcriptionUri(),
                 jsonHeaders(apiKey),
-                HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(json), StandardCharsets.UTF_8),
+                HttpBody.bytes(JSON_CODEC.writeBytes(requestBody)),
                 context.timeout(),
                 SMALL_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(httpRequest, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(httpRequest, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException(errorMessage("transcription", response, context));
         }
@@ -182,34 +178,38 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
         Instant deadline = clock.instant().plus(pollingDeadline(request.durationMillis()));
         while (true) {
             throwIfCancelled(context);
-            SttHttpResponse response = transport.send(pollRequest(context, apiKey, transcriptId), context.cancellationToken());
+            HttpExchangeResponse response = transport.send(pollRequest(context, apiKey, transcriptId), context.cancellationToken());
             throwIfCancelled(context);
             if (!response.successful()) {
                 throw new SpeechToTextException(errorMessage("poll", response, context));
             }
-            JsonNode json = parseJson(response.body(), "AssemblyAI transcription response was invalid.");
-            String status = StringUtils.trimToEmpty(json.path("status").asText(""));
+            AssemblyAiSttApi.TranscriptResponse body = parseJson(
+                    response.body(),
+                    AssemblyAiSttApi.TranscriptResponse.class,
+                    "AssemblyAI transcription response was invalid."
+            );
+            String status = StringUtils.trimToEmpty(body.status());
             switch (status) {
                 case "completed" -> {
-                    String text = StringUtils.trimToEmpty(json.path("text").asText(""));
+                    String text = StringUtils.trimToEmpty(body.text());
                     if (text.isBlank()) {
                         throw new SpeechToTextException("No speech was recorded.");
                     }
                     return new SpeechToTextResult(text);
                 }
-                case "error" -> throw new SpeechToTextException("AssemblyAI transcription failed: %s".formatted(safeDetail(json.path("error").asText(""), context)));
+                case "error" -> throw new SpeechToTextException("AssemblyAI transcription failed: %s".formatted(safeDetail(errorValue(body.error()), context)));
                 case "queued", "processing" -> waitForNextPoll(context, deadline);
                 default -> throw new SpeechToTextException("AssemblyAI transcription response was invalid.");
             }
         }
     }
 
-    private SttHttpRequest pollRequest(SpeechToTextProviderContext context, String apiKey, String transcriptId) throws SpeechToTextException {
-        return new SttHttpRequest(
+    private HttpExchangeRequest pollRequest(SpeechToTextProviderContext context, String apiKey, String transcriptId) throws SpeechToTextException {
+        return new HttpExchangeRequest(
                 "GET",
                 AssemblyAiSttEndpointResolver.transcriptUri(context.baseUri(), transcriptId),
                 authJsonHeaders(apiKey),
-                HttpRequest.BodyPublishers.noBody(),
+                HttpBody.empty(),
                 context.timeout(),
                 POLL_RESPONSE_LIMIT_BYTES
         );
@@ -242,11 +242,11 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
             return;
         }
         try {
-            SttHttpRequest request = new SttHttpRequest(
+            HttpExchangeRequest request = new HttpExchangeRequest(
                     "DELETE",
                     AssemblyAiSttEndpointResolver.transcriptUri(context.baseUri(), transcriptId),
                     authJsonHeaders(apiKey),
-                    HttpRequest.BodyPublishers.noBody(),
+                    HttpBody.empty(),
                     CLEANUP_TIMEOUT,
                     SMALL_RESPONSE_LIMIT_BYTES
             );
@@ -264,7 +264,12 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private String parseUploadUrl(byte[] body) throws SpeechToTextException {
-        String uploadUrl = StringUtils.trimToEmpty(parseJson(body, "AssemblyAI upload response was invalid.").path("upload_url").asText(""));
+        AssemblyAiSttApi.UploadResponse response = parseJson(
+                body,
+                AssemblyAiSttApi.UploadResponse.class,
+                "AssemblyAI upload response was invalid."
+        );
+        String uploadUrl = StringUtils.trimToEmpty(response.uploadUrl());
         if (invalidUrl(uploadUrl)) {
             throw new SpeechToTextException("AssemblyAI upload response was invalid.");
         }
@@ -272,16 +277,21 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private String parseTranscriptId(byte[] body) throws SpeechToTextException {
-        String id = StringUtils.trimToEmpty(parseJson(body, "AssemblyAI transcription response was invalid.").path("id").asText(""));
+        AssemblyAiSttApi.CreateTranscriptResponse response = parseJson(
+                body,
+                AssemblyAiSttApi.CreateTranscriptResponse.class,
+                "AssemblyAI transcription response was invalid."
+        );
+        String id = StringUtils.trimToEmpty(response.id());
         if (StringUtils.isBlank(id) || id.chars().anyMatch(Character::isISOControl)) {
             throw new SpeechToTextException("AssemblyAI transcription response was invalid.");
         }
         return id;
     }
 
-    private JsonNode parseJson(byte[] body, String invalidMessage) throws SpeechToTextException {
+    private <T> T parseJson(byte[] body, Class<T> type, String invalidMessage) throws SpeechToTextException {
         try {
-            return OBJECT_MAPPER.readTree(body);
+            return JSON_CODEC.read(body, type);
         } catch (Exception e) {
             throw new SpeechToTextException(invalidMessage, e);
         }
@@ -323,7 +333,7 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
         );
     }
 
-    private String errorMessage(String stage, SttHttpResponse response, SpeechToTextProviderContext context) {
+    private String errorMessage(String stage, HttpExchangeResponse response, SpeechToTextProviderContext context) {
         return switch (response.statusCode()) {
             case 401, 403 -> "AssemblyAI credentials were rejected.";
             case 404 -> "AssemblyAI speech-to-text endpoint or transcript job was not found.";
@@ -335,19 +345,25 @@ public class AssemblyAiSpeechToTextProvider implements SpeechToTextProvider {
         };
     }
 
-    private String errorDetail(SttHttpResponse response, SpeechToTextProviderContext context) {
+    private String errorDetail(HttpExchangeResponse response, SpeechToTextProviderContext context) {
         String body = StringUtils.abbreviate(response.bodyText(), 64 * 1024);
         try {
-            JsonNode json = OBJECT_MAPPER.readTree(body);
-            String message = firstNonBlank(
-                    json.path("error").path("message").asText(""),
-                    json.path("error").asText(""),
-                    json.path("message").asText("")
-            );
+            AssemblyAiSttApi.ErrorResponse error = JSON_CODEC.read(body, AssemblyAiSttApi.ErrorResponse.class);
+            String message = firstNonBlank(errorValue(error.error()), error.message());
             return safeDetail(StringUtils.defaultIfBlank(message, "HTTP %d".formatted(response.statusCode())), context);
         } catch (Exception e) {
             return safeDetail(StringUtils.defaultIfBlank(body, "HTTP %d".formatted(response.statusCode())), context);
         }
+    }
+
+    private String errorValue(Object error) {
+        if (error instanceof String text) {
+            return text;
+        }
+        if (error instanceof Map<?, ?> object && object.get("message") instanceof String message) {
+            return message;
+        }
+        return "";
     }
 
     private String safeDetail(String message, SpeechToTextProviderContext context) {

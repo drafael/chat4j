@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -152,7 +152,7 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
         String modelId = normalizeVoiceModelId(StringUtils.defaultIfBlank(request.voiceId(), request.modelId()));
         var body = new DeepgramApi.SynthesisRequest(request.text());
-        TtsHttpResponse response = postJson(
+        HttpExchangeResponse response = postJson(
                 URI.create("%s/speak?model=%s&encoding=linear16&container=none&sample_rate=%d".formatted(BASE_URL, modelId, SAMPLE_RATE)),
                 jsonHeaders(apiKey),
                 body
@@ -194,7 +194,7 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         );
     }
 
-    private static byte[] wavBytes(TtsHttpResponse response) {
+    private static byte[] wavBytes(HttpExchangeResponse response) {
         String contentType = StringUtils.defaultString(response.firstHeader("content-type")).toLowerCase(Locale.ROOT);
         if (!Strings.CS.startsWith(contentType, "audio/l16")) {
             throw new IllegalStateException("Deepgram TTS returned an unexpected audio content type.");

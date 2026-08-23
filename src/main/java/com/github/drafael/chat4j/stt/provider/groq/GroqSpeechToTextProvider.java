@@ -1,18 +1,16 @@
 package com.github.drafael.chat4j.stt.provider.groq;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
-import java.net.http.HttpRequest;
-import java.nio.charset.StandardCharsets;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.HttpBody;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,7 +20,6 @@ import java.util.UUID;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
-import static java.util.stream.StreamSupport.stream;
 
 public class GroqSpeechToTextProvider implements SpeechToTextProvider {
 
@@ -32,11 +29,11 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
     private static final long TRANSCRIPTION_RESPONSE_LIMIT_BYTES = 1024L * 1024L;
     private static final long MODEL_RESPONSE_LIMIT_BYTES = 2L * 1024L * 1024L;
     private static final int ERROR_DETAIL_LIMIT = 64 * 1024;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
-    private final SttHttpTransport transport;
+    private final HttpTransport transport;
 
-    public GroqSpeechToTextProvider(SttHttpTransport transport) {
+    public GroqSpeechToTextProvider(HttpTransport transport) {
         this.transport = transport;
     }
 
@@ -70,42 +67,38 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
         if (!available(context.credentialSource())) {
             throw new SpeechToTextException("Groq model catalog refresh requires credentials.");
         }
-        SttHttpRequest request = new SttHttpRequest(
+        HttpExchangeRequest request = new HttpExchangeRequest(
                 "GET",
                 GroqSttEndpointResolver.resolve(context.baseUri().toString()).modelsUri(),
                 authJsonHeaders(context),
-                HttpRequest.BodyPublishers.noBody(),
+                HttpBody.empty(),
                 context.timeout(),
                 MODEL_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(request, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(request, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException(
                     "Groq model catalog refresh failed with HTTP %d.".formatted(response.statusCode())
             );
         }
         List<SpeechToTextCatalogItem> models = new ArrayList<>();
+        GroqSttApi.ModelsResponse body;
         try {
-            JsonNode root = OBJECT_MAPPER.readTree(response.body());
-            JsonNode data = root == null ? null : root.path("data");
-            if (data == null || !data.isArray()) {
-                throw new SpeechToTextException("Groq model catalog response was invalid.");
-            }
-            if (!data.isEmpty() && stream(data.spliterator(), false)
-                    .noneMatch(model -> StringUtils.isNotBlank(model.path("id").asText("")))) {
-                throw new SpeechToTextException("Groq model catalog response did not contain valid model IDs.");
-            }
-            data.forEach(model -> {
-                String modelId = model.path("id").asText("");
-                if (isTranscriptionModel(modelId)) {
-                    models.add(SpeechToTextCatalogItem.of(modelId, modelId));
-                }
-            });
-        } catch (SpeechToTextException e) {
-            throw e;
+            body = JSON_CODEC.read(response.body(), GroqSttApi.ModelsResponse.class);
         } catch (Exception e) {
             throw new SpeechToTextException("Groq model catalog response was invalid.", e);
         }
+        if (body.data() == null) {
+            throw new SpeechToTextException("Groq model catalog response was invalid.");
+        }
+        if (!body.data().isEmpty() && body.data().stream()
+                .noneMatch(model -> model != null && StringUtils.isNotBlank(model.id()))) {
+            throw new SpeechToTextException("Groq model catalog response did not contain valid model IDs.");
+        }
+        body.data().stream()
+                .filter(model -> model != null && isTranscriptionModel(model.id()))
+                .map(model -> SpeechToTextCatalogItem.of(model.id(), model.id()))
+                .forEach(models::add);
         return models.isEmpty() ? bundledModels() : models;
     }
 
@@ -115,7 +108,7 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
             throw new SpeechToTextException("Recording is too large to upload.");
         }
         String boundary = "----chat4j-stt-%s".formatted(UUID.randomUUID());
-        SttHttpRequest httpRequest = new SttHttpRequest(
+        HttpExchangeRequest httpRequest = new HttpExchangeRequest(
                 "POST",
                 context.transcriptionUri(),
                 multipartHeaders(context, boundary),
@@ -123,55 +116,52 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
                 context.timeout(),
                 TRANSCRIPTION_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(httpRequest, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(httpRequest, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException(errorMessage(response));
         }
         return parseTranscript(response);
     }
 
-    private SpeechToTextResult parseTranscript(SttHttpResponse response) throws Exception {
-        JsonNode json;
+    private SpeechToTextResult parseTranscript(HttpExchangeResponse response) throws Exception {
+        GroqSttApi.TranscriptionResponse body;
         try {
-            json = OBJECT_MAPPER.readTree(response.body());
+            body = JSON_CODEC.read(response.body(), GroqSttApi.TranscriptionResponse.class);
         } catch (Exception e) {
             throw new SpeechToTextException("Transcription response was invalid.", e);
         }
-        String text = StringUtils.trimToEmpty(json.path("text").asText(""));
+        String text = StringUtils.trimToEmpty(body.text());
         if (text.isBlank()) {
             throw new SpeechToTextException("No speech was recorded.");
         }
         return new SpeechToTextResult(text);
     }
 
-    private HttpRequest.BodyPublisher multipartBody(String boundary, Path audioFile, String modelId) throws Exception {
-        return HttpRequest.BodyPublishers.concat(
+    private HttpBody multipartBody(String boundary, Path audioFile, String modelId) {
+        return HttpBody.composite(List.of(
                 stringPart(boundary, "model", modelId),
                 stringPart(boundary, "response_format", "json"),
                 filePart(boundary, audioFile),
-                HttpRequest.BodyPublishers.ofString("--%s--\r\n".formatted(boundary), StandardCharsets.UTF_8)
-        );
+                HttpBody.utf8("--%s--\r\n".formatted(boundary))
+        ));
     }
 
-    private HttpRequest.BodyPublisher stringPart(String boundary, String name, String value) {
-        return HttpRequest.BodyPublishers.ofString(
+    private HttpBody stringPart(String boundary, String name, String value) {
+        return HttpBody.utf8(
                 "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
-                        .formatted(boundary, name, StringUtils.defaultString(value)),
-                StandardCharsets.UTF_8
+                        .formatted(boundary, name, StringUtils.defaultString(value))
         );
     }
 
-    private HttpRequest.BodyPublisher filePart(String boundary, Path audioFile) throws Exception {
-        HttpRequest.BodyPublisher prefix = HttpRequest.BodyPublishers.ofString(
-                "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: audio/wav\r\n\r\n"
-                        .formatted(boundary, safeFileName(audioFile)),
-                StandardCharsets.UTF_8
-        );
-        return HttpRequest.BodyPublishers.concat(
-                prefix,
-                HttpRequest.BodyPublishers.ofFile(audioFile),
-                HttpRequest.BodyPublishers.ofString("\r\n", StandardCharsets.UTF_8)
-        );
+    private HttpBody filePart(String boundary, Path audioFile) {
+        return HttpBody.composite(List.of(
+                HttpBody.utf8(
+                        "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: audio/wav\r\n\r\n"
+                                .formatted(boundary, safeFileName(audioFile))
+                ),
+                HttpBody.file(audioFile),
+                HttpBody.utf8("\r\n")
+        ));
     }
 
     private String safeFileName(Path audioFile) {
@@ -195,7 +185,7 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
         );
     }
 
-    private String errorMessage(SttHttpResponse response) {
+    private String errorMessage(HttpExchangeResponse response) {
         return switch (response.statusCode()) {
             case 401, 403 -> "Groq credentials were rejected.";
             case 404 -> "Groq transcription endpoint or model was not found.";
@@ -207,14 +197,14 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
         };
     }
 
-    private String errorDetail(SttHttpResponse response) {
+    private String errorDetail(HttpExchangeResponse response) {
         String body = StringUtils.abbreviate(response.bodyText(), ERROR_DETAIL_LIMIT);
         try {
-            JsonNode json = OBJECT_MAPPER.readTree(body);
+            GroqSttApi.ErrorResponse error = JSON_CODEC.read(body, GroqSttApi.ErrorResponse.class);
             String message = firstNonBlank(
-                    json.path("error").path("message").asText(""),
-                    json.path("detail").path("message").asText(""),
-                    json.path("message").asText("")
+                    error.error() == null ? "" : error.error().message(),
+                    error.detail() == null ? "" : error.detail().message(),
+                    error.message()
             );
             return StringUtils.defaultIfBlank(message, "HTTP %d".formatted(response.statusCode()));
         } catch (Exception e) {

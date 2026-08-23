@@ -5,9 +5,9 @@ import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -162,7 +162,7 @@ class AssemblyAiSpeechToTextProviderTest {
         Path audio = audioFile();
         var transport = new SequentialTransport(
                 success("{\"upload_url\":\"https://cdn.example/audio.wav\"}"),
-                new SttHttpResponse(422, emptyMap(), "{\"error\":{\"message\":\"bad test-key input\"}}".getBytes(StandardCharsets.UTF_8))
+                new HttpExchangeResponse(422, emptyMap(), "{\"error\":{\"message\":\"bad test-key input\"}}".getBytes(StandardCharsets.UTF_8))
         );
         var subject = new AssemblyAiSpeechToTextProvider(transport);
 
@@ -180,7 +180,7 @@ class AssemblyAiSpeechToTextProviderTest {
         var transport = new SequentialTransport(
                 success("{\"upload_url\":\"https://cdn.example/audio.wav\"}"),
                 success("{\"id\":\"tx123\"}"),
-                new SttHttpResponse(429, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8)),
+                new HttpExchangeResponse(429, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8)),
                 success("{}")
         );
         var subject = new AssemblyAiSpeechToTextProvider(transport);
@@ -324,7 +324,7 @@ class AssemblyAiSpeechToTextProviderTest {
                 .isInstanceOf(SpeechToTextException.class)
                 .hasMessage("Transcription canceled.");
         assertThat(transport.requests).extracting("method").containsExactly("POST", "POST", "DELETE");
-        assertThat(transport.tokens.get(2).cancelled()).isFalse();
+        assertThat(transport.tokens.get(2).getAsBoolean()).isFalse();
     }
 
     @Test
@@ -371,7 +371,7 @@ class AssemblyAiSpeechToTextProviderTest {
     }
 
     private void assertTranscriptionError(Path audio, int statusCode, String message) {
-        var subject = new AssemblyAiSpeechToTextProvider(new SequentialTransport(new SttHttpResponse(statusCode, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))));
+        var subject = new AssemblyAiSpeechToTextProvider(new SequentialTransport(new HttpExchangeResponse(statusCode, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))));
 
         assertThatThrownBy(() -> subject.transcribe(request("assemblyai-auto", audio, 1_000), context(credentials(true))))
                 .isInstanceOf(SpeechToTextException.class)
@@ -420,30 +420,28 @@ class AssemblyAiSpeechToTextProviderTest {
         };
     }
 
-    private static SttHttpResponse success(String body) {
-        return new SttHttpResponse(200, emptyMap(), body.getBytes(StandardCharsets.UTF_8));
+    private static HttpExchangeResponse success(String body) {
+        return new HttpExchangeResponse(200, emptyMap(), body.getBytes(StandardCharsets.UTF_8));
     }
 
-    private String bodyText(SttHttpRequest request) throws Exception {
-        var subscriber = new BodySubscriber();
-        request.bodyPublisher().subscribe(subscriber);
-        return subscriber.body();
+    private String bodyText(HttpExchangeRequest request) throws Exception {
+        return new String(com.github.drafael.chat4j.http.HttpBodyTestSupport.bytes(request.body()), StandardCharsets.UTF_8);
     }
 
-    private static class SequentialTransport implements SttHttpTransport {
-        protected final ArrayDeque<SttHttpResponse> responses = new ArrayDeque<>();
-        protected final List<SttHttpRequest> requests = new ArrayList<>();
-        protected final List<SpeechToTextProviderContext.CancellationToken> tokens = new ArrayList<>();
+    private static class SequentialTransport implements HttpTransport {
+        protected final ArrayDeque<HttpExchangeResponse> responses = new ArrayDeque<>();
+        protected final List<HttpExchangeRequest> requests = new ArrayList<>();
+        protected final List<java.util.function.BooleanSupplier> tokens = new ArrayList<>();
         private RequestCallback afterSend = request -> {
         };
         private boolean failDelete;
 
-        private SequentialTransport(SttHttpResponse... responses) {
+        private SequentialTransport(HttpExchangeResponse... responses) {
             this.responses.addAll(List.of(responses));
         }
 
         @Override
-        public SttHttpResponse send(SttHttpRequest request, SpeechToTextProviderContext.CancellationToken cancellationToken) {
+        public HttpExchangeResponse send(HttpExchangeRequest request, java.util.function.BooleanSupplier cancellationToken) {
             requests.add(request);
             tokens.add(cancellationToken);
             afterSend.call(request);
@@ -455,12 +453,12 @@ class AssemblyAiSpeechToTextProviderTest {
     }
 
     private static final class QueuedPollTransport extends SequentialTransport {
-        private QueuedPollTransport(SttHttpResponse upload, SttHttpResponse submit) {
+        private QueuedPollTransport(HttpExchangeResponse upload, HttpExchangeResponse submit) {
             super(upload, submit);
         }
 
         @Override
-        public SttHttpResponse send(SttHttpRequest request, SpeechToTextProviderContext.CancellationToken cancellationToken) {
+        public HttpExchangeResponse send(HttpExchangeRequest request, java.util.function.BooleanSupplier cancellationToken) {
             requests.add(request);
             tokens.add(cancellationToken);
             if ("GET".equals(request.method())) {
@@ -544,6 +542,6 @@ class AssemblyAiSpeechToTextProviderTest {
 
     @FunctionalInterface
     private interface RequestCallback {
-        void call(SttHttpRequest request);
+        void call(HttpExchangeRequest request);
     }
 }

@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.provider.support.BlockingHttpClientTransport;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntryKind;
@@ -153,12 +154,12 @@ class ChatPanelTest {
         copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         );
         codexAuthResolver = new CodexAuthResolver(
                 tempDir.resolve("codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         );
         ApiTokenVault tokenVault = new ApiTokenVault(
                 StoragePaths.ofConfigHome(tempDir.resolve("credentials"))
@@ -2872,13 +2873,12 @@ class ChatPanelTest {
         );
         var persistenceCalls = new AtomicInteger();
         List<ChatPanel.UserMessageEvent> events = new CopyOnWriteArrayList<>();
-        var firstPersistenceCalled = new CountDownLatch(1);
+        var firstPersistence = new CompletableFuture<UUID>();
         runOnEdt(() -> {
             subject.setOnDurableUserMessageSubmitted(event -> {
                 events.add(event);
                 if (persistenceCalls.incrementAndGet() == 1) {
-                    firstPersistenceCalled.countDown();
-                    return CompletableFuture.failedFuture(new SQLException("forced failure"));
+                    return firstPersistence;
                 }
                 return CompletableFuture.completedFuture(event.conversationId());
             });
@@ -2886,7 +2886,9 @@ class ChatPanelTest {
         });
 
         invokeOnSend(subject);
-        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        awaitCurrentSendPreparation();
+        assertThat(events).hasSize(1);
+        assertThat(firstPersistence.completeExceptionally(new SQLException("forced failure"))).isTrue();
         flushEdt();
         configureAgent("OpenAI", "gpt-5", "https://api.openai.com/v1", agentTurns);
         invokeOnSend(subject);
@@ -2915,13 +2917,12 @@ class ChatPanelTest {
         );
         var persistenceCalls = new AtomicInteger();
         List<ChatPanel.UserMessageEvent> events = new CopyOnWriteArrayList<>();
-        var firstPersistenceCalled = new CountDownLatch(1);
+        var firstPersistence = new CompletableFuture<UUID>();
         runOnEdt(() -> {
             subject.setOnDurableUserMessageSubmitted(event -> {
                 events.add(event);
                 if (persistenceCalls.incrementAndGet() == 1) {
-                    firstPersistenceCalled.countDown();
-                    return CompletableFuture.failedFuture(new SQLException("forced failure"));
+                    return firstPersistence;
                 }
                 return CompletableFuture.completedFuture(event.conversationId());
             });
@@ -2929,7 +2930,9 @@ class ChatPanelTest {
         });
 
         invokeOnSend(subject);
-        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        awaitCurrentSendPreparation();
+        assertThat(events).hasSize(1);
+        assertThat(firstPersistence.completeExceptionally(new SQLException("forced failure"))).isTrue();
         flushEdt();
         configureTogetherAgent(agentTurns);
         invokeOnSend(subject);
@@ -8735,6 +8738,17 @@ class ChatPanelTest {
                 throw new RuntimeException(e);
             }
         });
+    }
+
+    @SuppressWarnings("unchecked")
+    private void awaitCurrentSendPreparation() throws Exception {
+        Thread worker = callOnEdt(() -> ((Map<Long, SendJob>) readField(subject, "activeSendJobs"))
+                .values()
+                .iterator()
+                .next()
+                .worker);
+        worker.join();
+        flushEdt();
     }
 
     private void awaitReadAloudAvailability() throws Exception {

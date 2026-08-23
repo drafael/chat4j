@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.tts.provider;
 
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
 import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
@@ -53,13 +54,13 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
             Class<T> responseType,
             String invalidResponseMessage
     ) throws Exception {
-        TtsHttpResponse response = httpClient.get(uri, headers);
+        HttpExchangeResponse response = httpClient.get(uri, headers);
         requireSuccess(response);
         return httpClient.readJson(response.body(), responseType, invalidResponseMessage);
     }
 
-    protected final TtsHttpResponse postJson(URI uri, Map<String, String> headers, Object requestBody) throws Exception {
-        TtsHttpResponse response = httpClient.postJson(uri, headers, requestBody);
+    protected final HttpExchangeResponse postJson(URI uri, Map<String, String> headers, Object requestBody) throws Exception {
+        HttpExchangeResponse response = httpClient.postJson(uri, headers, requestBody);
         requireSuccess(response);
         return response;
     }
@@ -71,7 +72,7 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
             Class<T> responseType,
             String invalidResponseMessage
     ) throws Exception {
-        TtsHttpResponse response = postJson(uri, headers, requestBody);
+        HttpExchangeResponse response = postJson(uri, headers, requestBody);
         return httpClient.readJson(response.body(), responseType, invalidResponseMessage);
     }
 
@@ -79,7 +80,7 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
         return httpClient.tryReadJson(body, responseType);
     }
 
-    protected TextToSpeechAudio audioBody(TtsHttpResponse response, String fallbackFormat) {
+    protected TextToSpeechAudio audioBody(HttpExchangeResponse response, String fallbackFormat) {
         String contentType = response.firstHeader("content-type");
         return new TextToSpeechAudio(response.body(), contentType, fallbackFormat);
     }
@@ -88,7 +89,7 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
         return discovered == null || discovered.isEmpty() ? bundled : discovered;
     }
 
-    private void requireSuccess(TtsHttpResponse response) {
+    private void requireSuccess(HttpExchangeResponse response) {
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
             return;
         }

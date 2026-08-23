@@ -1,7 +1,8 @@
 package com.github.drafael.chat4j.stt;
 
 import com.github.drafael.chat4j.persistence.catalog.SpeechCatalogKeySchema;
-import com.github.drafael.chat4j.stt.provider.JavaNetSttHttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
+import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
@@ -29,7 +30,7 @@ public class SpeechToTextProviderRegistry {
     }
 
     public static SpeechToTextProviderRegistry createDefault(WhisperSpeechToTextProvider whisperProvider) {
-        JavaNetSttHttpTransport transport = new JavaNetSttHttpTransport();
+        HttpTransport transport = new JavaNetHttpTransport();
         return new SpeechToTextProviderRegistry(List.of(
                 new GroqSpeechToTextProvider(transport),
                 new ElevenLabsSpeechToTextProvider(transport),

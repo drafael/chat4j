@@ -1,5 +1,10 @@
 package com.github.drafael.chat4j.stt.provider;
 
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -18,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
-class JavaNetSttHttpTransportTest {
+class JavaNetHttpTransportTest {
 
     @Test
     @DisplayName("Request timeout closes a response body that stalls after sending headers")
@@ -38,17 +43,17 @@ class JavaNetSttHttpTransportTest {
             }
         });
         server.start();
-        var subject = new JavaNetSttHttpTransport();
-        var request = new SttHttpRequest(
+        var subject = new JavaNetHttpTransport();
+        var request = new HttpExchangeRequest(
                 "POST",
                 java.net.URI.create("http://127.0.0.1:%d/transcribe".formatted(server.getAddress().getPort())),
                 Map.of(),
-                HttpRequest.BodyPublishers.noBody(),
+                HttpBody.empty(),
                 Duration.ofMillis(500),
                 1_024
         );
 
-        CompletableFuture<SttHttpResponse> response = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<HttpExchangeResponse> response = CompletableFuture.supplyAsync(() -> {
             try {
                 return subject.send(request, () -> false);
             } catch (Exception e) {
@@ -60,8 +65,8 @@ class JavaNetSttHttpTransportTest {
 
             Throwable error = catchThrowable(() -> response.get(2, TimeUnit.SECONDS));
             assertThat(ExceptionUtils.getThrowableList(error)).anySatisfy(cause -> assertThat(cause)
-                    .isInstanceOf(SpeechToTextException.class)
-                    .hasMessage("Transcription request timed out."));
+                    .isInstanceOf(java.net.http.HttpTimeoutException.class)
+                    .hasMessage("HTTP request timed out."));
         } finally {
             releaseResponse.countDown();
             server.stop(0);
@@ -87,17 +92,17 @@ class JavaNetSttHttpTransportTest {
         });
         server.start();
         var cancelled = new AtomicBoolean();
-        var subject = new JavaNetSttHttpTransport();
-        var request = new SttHttpRequest(
+        var subject = new JavaNetHttpTransport();
+        var request = new HttpExchangeRequest(
                 "POST",
                 java.net.URI.create("http://127.0.0.1:%d/transcribe".formatted(server.getAddress().getPort())),
                 Map.of(),
-                HttpRequest.BodyPublishers.noBody(),
+                HttpBody.empty(),
                 Duration.ofSeconds(10),
                 1_024
         );
 
-        CompletableFuture<SttHttpResponse> response = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<HttpExchangeResponse> response = CompletableFuture.supplyAsync(() -> {
             try {
                 return subject.send(request, cancelled::get);
             } catch (Exception e) {
@@ -110,8 +115,8 @@ class JavaNetSttHttpTransportTest {
 
             Throwable error = catchThrowable(() -> response.get(2, TimeUnit.SECONDS));
             assertThat(ExceptionUtils.getThrowableList(error)).anySatisfy(cause -> assertThat(cause)
-                    .isInstanceOf(SpeechToTextException.class)
-                    .hasMessage("Transcription canceled."));
+                    .isInstanceOf(java.util.concurrent.CancellationException.class)
+                    .hasMessage("HTTP request was canceled."));
         } finally {
             releaseResponse.countDown();
             server.stop(0);

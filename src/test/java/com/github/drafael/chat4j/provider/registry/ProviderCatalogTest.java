@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.registry;
 
+import com.github.drafael.chat4j.provider.support.BlockingHttpClientTransport;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.chat.impl.DeepSeekChatCompletionClient;
@@ -108,8 +109,8 @@ class ProviderCatalogTest {
         var credentialMutationService = new CredentialMutationService(vault, credentialResolver);
         try {
             var subject = new ProviderCatalog(
-                    new CopilotAuthResolver(tempDir.resolve("together-copilot-home"), emptyMap(), HttpClient.newHttpClient()),
-                    new CodexAuthResolver(tempDir.resolve("together-codex-home"), emptyMap(), HttpClient.newHttpClient()),
+                    new CopilotAuthResolver(tempDir.resolve("together-copilot-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient())),
+                    new CodexAuthResolver(tempDir.resolve("together-codex-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient())),
                     new CopilotModelMetadataStore(tempDir.resolve("together-metadata")),
                     credentialResolver,
                     emptyMap(),
@@ -185,7 +186,7 @@ class ProviderCatalogTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("generation-race-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public String resolveBearerTokenOrNull() {
@@ -206,7 +207,7 @@ class ProviderCatalogTest {
                 new CodexAuthResolver(
                         tempDir.resolve("generation-race-codex-home"),
                         emptyMap(),
-                        HttpClient.newHttpClient()
+                        new BlockingHttpClientTransport(HttpClient.newHttpClient())
                 ),
                 metadataStore,
                 new CredentialResolver(
@@ -388,8 +389,8 @@ class ProviderCatalogTest {
         ApiTokenVault vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials")));
         CredentialResolver credentialResolver = new CredentialResolver(vault, processEnvironment, emptyMap());
         return new ProviderCatalog(
-                new CopilotAuthResolver(tempDir.resolve("copilot-home"), emptyMap(), HttpClient.newHttpClient()),
-                new CodexAuthResolver(tempDir.resolve("codex-home"), emptyMap(), HttpClient.newHttpClient()),
+                new CopilotAuthResolver(tempDir.resolve("copilot-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient())),
+                new CodexAuthResolver(tempDir.resolve("codex-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient())),
                 new CopilotModelMetadataStore(tempDir.resolve("metadata")),
                 credentialResolver,
                 emptyMap(),
