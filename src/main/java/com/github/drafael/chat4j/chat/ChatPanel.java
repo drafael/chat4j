@@ -519,6 +519,7 @@ public class ChatPanel extends JPanel {
             @Override
             public void doLayout() {
                 bodyContent.setBounds(0, 0, getWidth(), getHeight());
+                topFadeOverlay.setVisible(!isBrowserConversationEnabled());
                 topFadeOverlay.setBounds(0, 0, getWidth(), Math.min(CHAT_TOP_FADE_HEIGHT, getHeight()));
                 layoutJumpOverlay();
                 layoutReadAloudStatusLabel();
@@ -582,6 +583,13 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        if (isBrowserConversationEnabled()) {
+            jumpToLatestOverlay.setVisible(false);
+            composerFadeOverlay.setVisible(false);
+            return;
+        }
+
+        composerFadeOverlay.setVisible(true);
         Dimension size = jumpToLatestOverlay.getPreferredSize();
         int inputTopY = inputBarTopY();
         int x = (bodyLayered.getWidth() - size.width) / 2;
@@ -626,7 +634,11 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        boolean shouldShow = !atBottom;
+        boolean browserConversationEnabled = isBrowserConversationEnabled();
+        if (browserConversationEnabled) {
+            jumpToLatestOverlay.setStreaming(false);
+        }
+        boolean shouldShow = !browserConversationEnabled && !atBottom;
         if (jumpToLatestOverlay.isVisible() != shouldShow) {
             jumpToLatestOverlay.setVisible(shouldShow);
             if (bodyLayered != null) {
@@ -2952,13 +2964,13 @@ public class ChatPanel extends JPanel {
         boolean buttonsWereVisible = Arrays.stream(bar.getComponents()).anyMatch(Component::isVisible);
         bar.removeAll();
         bar.add(createCopyMessageButton(bubble));
+        if (role == Role.USER) {
+            bar.add(createEditMessageButton(bubble));
+        }
         if (canReadAloud(bubble, role) || textToSpeechService.isReadAloudActive(swingReadAloudKey(bubble))) {
             bar.add(createReadAloudButton(bubble));
         }
         bar.add(createRegenerateButton(bubble));
-        if (role == Role.USER) {
-            bar.add(createEditMessageButton(bubble));
-        }
         int buttonCount = bar.getComponentCount();
         int buttonGapWidth = Math.max(0, buttonCount - 1) * 2;
         Dimension size = new Dimension(BUBBLE_ACTION_BUTTON_SIZE * buttonCount + buttonGapWidth, BUBBLE_ACTION_BAR_HEIGHT);
@@ -4531,6 +4543,12 @@ public class ChatPanel extends JPanel {
             }
             if (Strings.CS.equals(action, "copy")) {
                 copyBubbleTextToClipboard(bubble);
+                return;
+            }
+            if (Strings.CS.equals(action, "edit")) {
+                if (bubble.getRole() == Role.USER && messageIndex(bubble) == messageIndex) {
+                    startEditingUserMessage(bubble);
+                }
                 return;
             }
             if (Strings.CS.equals(action, "regenerate")) {

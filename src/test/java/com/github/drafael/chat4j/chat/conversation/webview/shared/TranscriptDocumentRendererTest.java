@@ -62,6 +62,35 @@ class TranscriptDocumentRendererTest {
     }
 
     @Test
+    @DisplayName("User transcript actions place edit between copy and regenerate")
+    void renderDocument_whenMessagesHaveActions_rendersEditForUsersOnly() {
+        List<ConversationEntry> entries = List.of(
+                ConversationEntry.message(Role.USER, "Question", 0),
+                ConversationEntry.message(Role.ASSISTANT, "Answer", 1)
+        );
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(entries, RenderMode.PREVIEW, false, false);
+
+        String html = new TranscriptDocumentRenderer().renderDocument(new TranscriptDocumentRequest(
+                false,
+                snapshot,
+                TranscriptAssetMode.INLINE_ALL,
+                "",
+                ""
+        ));
+        var document = Jsoup.parse(html);
+        var userActions = document.select(".row.user .message-actions button");
+        var assistantActions = document.select(".row.assistant .message-actions button");
+
+        assertThat(userActions.eachAttr("data-action")).containsExactly("copy", "edit", "regenerate");
+        assertThat(userActions.get(1).attr("title")).isEqualTo("Edit message");
+        assertThat(userActions.get(1).select(".icon.edit[aria-hidden=true]")).hasSize(1);
+        assertThat(assistantActions.eachAttr("data-action")).containsExactly("copy", "regenerate");
+        assertThat(html)
+                .contains("--chat4j-edit-icon-mask: url('data:image/svg+xml;base64,")
+                .contains(".icon.edit {");
+    }
+
+    @Test
     @DisplayName("User skill markers render as input-style name chips without remove controls")
     void renderDocument_whenUserMessageHasActiveSkills_rendersNamesInsideChips() {
         MessageMeta meta = new MessageMeta(List.of("unslop", "debug-error"), false, "");

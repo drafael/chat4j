@@ -4356,6 +4356,30 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Browser transcripts hide the duplicate Swing fades and jump button")
+    void refreshJumpOverlay_whenBrowserTranscriptActive_hidesSwingTranscriptChrome() throws Exception {
+        installSystemWebViewCapture(new AtomicReference<>());
+        Method refreshMethod = ChatPanel.class.getDeclaredMethod("refreshJumpOverlay");
+        refreshMethod.setAccessible(true);
+
+        callOnEdt(() -> {
+            setField(subject, "atBottom", false);
+            JumpToLatestButton jumpToLatestOverlay = (JumpToLatestButton) readField(subject, "jumpToLatestOverlay");
+            jumpToLatestOverlay.setStreaming(true);
+            JLayeredPane bodyLayered = (JLayeredPane) readField(subject, "bodyLayered");
+            bodyLayered.setSize(800, 600);
+            bodyLayered.doLayout();
+            refreshMethod.invoke(subject);
+
+            assertThat(((JComponent) readField(subject, "topFadeOverlay")).isVisible()).isFalse();
+            assertThat(((JComponent) readField(subject, "composerFadeOverlay")).isVisible()).isFalse();
+            assertThat(jumpToLatestOverlay.isVisible()).isFalse();
+            assertThat(jumpToLatestOverlay.isStreaming()).isFalse();
+            return null;
+        });
+    }
+
+    @Test
     @DisplayName("Jump to latest stays hidden when streaming at conversation end")
     void setAutoScrollEnabled_whenStreamingAtBottom_keepsJumpToLatestHidden() throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod("refreshJumpOverlay");
@@ -4884,6 +4908,42 @@ class ChatPanelTest {
         flushEdt();
 
         assertThat(requested).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Browser transcript edit action loads the original user message into the edit composer")
+    void handleWebTranscriptAction_whenEditTargetsUser_startsExistingEditWorkflow() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        runOnEdt(() -> subject.loadConversationHistoryEntries(conversationId, List.of(
+                new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("original question")),
+                new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, Message.assistant("original answer"))
+        )));
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "edit", 0, ""));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::isEditingUserMessage)).isTrue();
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText())).isEqualTo("original question");
+        assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .map(JButton::getText)
+                .filter(StringUtils::isNotBlank)))
+                .contains("Save only", "Save & regenerate");
+    }
+
+    @Test
+    @DisplayName("Browser transcript edit action ignores assistant messages")
+    void handleWebTranscriptAction_whenEditTargetsAssistant_doesNotStartEditing() throws Exception {
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("answer"))));
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "edit", 0, ""));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::isEditingUserMessage)).isFalse();
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText())).isEmpty();
     }
 
     @Test

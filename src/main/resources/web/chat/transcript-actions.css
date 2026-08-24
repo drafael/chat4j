@@ -133,6 +133,11 @@
   mask: var(--chat4j-copy-icon-mask) center / contain no-repeat;
 }
 
+.icon.edit {
+  -webkit-mask: var(--chat4j-edit-icon-mask) center / contain no-repeat;
+  mask: var(--chat4j-edit-icon-mask) center / contain no-repeat;
+}
+
 .icon.regenerate {
   -webkit-mask: var(--chat4j-regenerate-icon-mask) center / contain no-repeat;
   mask: var(--chat4j-regenerate-icon-mask) center / contain no-repeat;

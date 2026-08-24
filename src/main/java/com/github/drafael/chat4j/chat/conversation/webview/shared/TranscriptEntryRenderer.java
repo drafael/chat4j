@@ -116,6 +116,9 @@ public final class TranscriptEntryRenderer {
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String attachments = renderAttachmentStripHtml(entry.attachments());
+        String editAction = entry.role() == Role.USER
+                ? renderEditAction(entry.messageIndex())
+                : "";
         String readAloudAction = shouldRenderReadAloudAction(entry, snapshot)
                 ? renderReadAloudAction(entry, snapshot)
                 : "";
@@ -125,11 +128,13 @@ public final class TranscriptEntryRenderer {
                   <div class="message-actions" data-message-index="%d">
                     <button class="message-action-button" title="Copy message" data-action="copy" data-message-index="%d"><span class="icon copy" aria-hidden="true"></span></button>
                     %s
+                    %s
                     <button class="message-action-button" title="%s" data-action="regenerate" data-message-index="%d"><span class="icon regenerate" aria-hidden="true"></span></button>
                   </div>
                 """.formatted(
                         entry.messageIndex(),
                         entry.messageIndex(),
+                        editAction,
                         readAloudAction,
                         entry.role() == Role.USER ? "Regenerate response" : "Regenerate this response",
                         entry.messageIndex()
@@ -143,6 +148,12 @@ public final class TranscriptEntryRenderer {
                   </div>
                 </section>
                 """.formatted(roleClass, entry.messageIndex(), attachments, actions, roleClass, body);
+    }
+
+    private static String renderEditAction(int messageIndex) {
+        return """
+                <button class="message-action-button" title="Edit message" data-action="edit" data-message-index="%d"><span class="icon edit" aria-hidden="true"></span></button>
+                """.formatted(messageIndex);
     }
 
     private static String renderTypingEntry(ConversationEntry entry) {
