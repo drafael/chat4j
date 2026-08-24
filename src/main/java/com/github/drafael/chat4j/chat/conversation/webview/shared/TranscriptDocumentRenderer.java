@@ -112,6 +112,9 @@ public final class TranscriptDocumentRenderer {
                   --chat4j-menu-bg: %s;
                   --chat4j-button-bg: %s;
                   --chat4j-button-border: %s;
+                  --chat4j-skill-chip-bg: %s;
+                  --chat4j-skill-chip-border: %s;
+                  --chat4j-skill-chip-fg: %s;
                   --chat4j-hover-bg: %s;
                   --chat4j-hover-fg: %s;
                   --chat4j-icon-color: %s;
@@ -167,6 +170,9 @@ public final class TranscriptDocumentRenderer {
                 chrome.menuBackground(),
                 chrome.buttonBackground(),
                 chrome.buttonBorder(),
+                chrome.skillChipBackground(),
+                chrome.skillChipBorder(),
+                chrome.skillChipForeground(),
                 chrome.hoverBackground(),
                 chrome.hoverForeground(),
                 chrome.iconColorValue(),
@@ -200,6 +206,11 @@ public final class TranscriptDocumentRenderer {
         Color menuBackgroundColor = uiManagerColor("PopupMenu.background", panelBackground);
         Color buttonBackgroundColor = uiManagerColor("Button.background", blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.04f));
         Color buttonBorderColor = uiManagerColor("Button.borderColor", componentBorderColor);
+        Color skillChipBaseColor = uiManagerColor("TextField.background", panelBackground);
+        Color skillGreen = new Color(16, 185, 129);
+        Color skillChipBackgroundColor = dark ? blend(skillChipBaseColor, skillGreen, 0.26f) : new Color(214, 250, 232);
+        Color skillChipBorderColor = dark ? blend(skillGreen, Color.WHITE, 0.18f) : new Color(125, 239, 183);
+        Color skillChipForegroundColor = dark ? new Color(181, 255, 218) : new Color(0, 95, 70);
         Color sourceAccentColor = uiManagerColor("Component.accentColor", dark ? new Color(60, 190, 188) : new Color(1, 106, 113));
         Color labelForegroundColor = uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK);
         Color hoverBackgroundColor = uiManagerColor(
@@ -222,6 +233,9 @@ public final class TranscriptDocumentRenderer {
                 cssColor(menuBackgroundColor),
                 cssColor(buttonBackgroundColor),
                 cssColor(buttonBorderColor),
+                cssColor(skillChipBackgroundColor),
+                cssColor(skillChipBorderColor),
+                cssColor(skillChipForegroundColor),
                 cssColor(blend(panelBackground, sourceAccentColor, dark ? 0.18f : 0.08f)),
                 cssColor(blend(panelBackground, sourceAccentColor, dark ? 0.52f : 0.34f)),
                 cssColor(blend(labelForegroundColor, sourceAccentColor, dark ? 0.36f : 0.28f)),

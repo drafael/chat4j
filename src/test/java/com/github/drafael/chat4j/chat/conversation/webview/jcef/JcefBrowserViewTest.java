@@ -119,6 +119,23 @@ class JcefBrowserViewTest {
     }
 
     @Test
+    @DisplayName("Releasing transcript focus clears Chromium keyboard focus")
+    void releaseFocus_whenBrowserIsActive_clearsNativeKeyboardFocus() throws Exception {
+        JcefBrowserView subject = callOnEdt(JcefBrowserView::new);
+        CefBrowser browser = mock(CefBrowser.class);
+        try {
+            runOnEdt(() -> {
+                setField(subject, "browser", browser);
+                subject.releaseFocus();
+            });
+
+            verify(browser).setFocus(false);
+        } finally {
+            runOnEdt(subject::dispose);
+        }
+    }
+
+    @Test
     @DisplayName("PDF preparation waits for rendered diagrams and verifies the durable turn shape")
     void pdfPreparationScript_whenBuilt_requiresSettledDiagramsAndMatchingTurns() throws Exception {
         JcefBrowserView subject = callOnEdt(JcefBrowserView::new);

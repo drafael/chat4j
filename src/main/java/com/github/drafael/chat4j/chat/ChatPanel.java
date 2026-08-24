@@ -473,6 +473,9 @@ public class ChatPanel extends JPanel {
 
         // Input bar at bottom
         inputBar = new InputBar();
+        if (jcefBrowserView != null) {
+            inputBar.setNativeFocusRelease(jcefBrowserView::releaseFocus);
+        }
         inputBar.addSendListener(e -> onSend());
         inputBar.addClearChatListener(e -> requestClearChat());
         inputBar.addCancelGenerationListener(e -> cancelStreamingAndMarkCancelled());

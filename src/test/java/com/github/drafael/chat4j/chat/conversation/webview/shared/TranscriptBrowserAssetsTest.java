@@ -44,6 +44,32 @@ class TranscriptBrowserAssetsTest {
     }
 
     @Test
+    @DisplayName("Skill chip colors follow the active light or dark transcript theme")
+    void renderDocument_whenThemeChanges_usesThemeSpecificSkillChipColors() {
+        TranscriptRenderSnapshot lightSnapshot = TranscriptRenderSupport.snapshot(List.of(), RenderMode.PREVIEW, false, false);
+        TranscriptRenderSnapshot darkSnapshot = TranscriptRenderSupport.snapshot(List.of(), RenderMode.PREVIEW, true, false);
+
+        String lightDocument = renderDocument(lightSnapshot);
+        String darkDocument = renderDocument(darkSnapshot);
+        TranscriptChrome lightChrome = lightSnapshot.chrome();
+        TranscriptChrome darkChrome = darkSnapshot.chrome();
+
+        assertThat(lightChrome.skillChipBackground()).isNotEqualTo(darkChrome.skillChipBackground());
+        assertThat(lightChrome.skillChipBorder()).isNotEqualTo(darkChrome.skillChipBorder());
+        assertThat(lightChrome.skillChipForeground()).isNotEqualTo(darkChrome.skillChipForeground());
+        assertThat(lightDocument).contains(
+                "--chat4j-skill-chip-bg: %s".formatted(lightChrome.skillChipBackground()),
+                "--chat4j-skill-chip-border: %s".formatted(lightChrome.skillChipBorder()),
+                "--chat4j-skill-chip-fg: %s".formatted(lightChrome.skillChipForeground())
+        );
+        assertThat(darkDocument).contains(
+                "--chat4j-skill-chip-bg: %s".formatted(darkChrome.skillChipBackground()),
+                "--chat4j-skill-chip-border: %s".formatted(darkChrome.skillChipBorder()),
+                "--chat4j-skill-chip-fg: %s".formatted(darkChrome.skillChipForeground())
+        );
+    }
+
+    @Test
     @DisplayName("Document renderer request controls scroll behavior and asset mode")
     void renderDocument_whenRequestUsesInternalAssetMode_containsInternalUrlsAndScrollScript() {
         TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(
@@ -821,6 +847,16 @@ class TranscriptBrowserAssetsTest {
         );
         context.eval("js", testableScript);
         return context.getBindings("js").getMember("window").getMember(exposedName);
+    }
+
+    private String renderDocument(TranscriptRenderSnapshot snapshot) {
+        return new TranscriptDocumentRenderer().renderDocument(new TranscriptDocumentRequest(
+                false,
+                snapshot,
+                TranscriptAssetMode.INLINE_ALL,
+                "",
+                ""
+        ));
     }
 
     private static String normalizeMermaidEscapedLineBreaks(Value normalizer, String source) {

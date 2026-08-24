@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,69 @@ class TranscriptDocumentRendererTest {
         assertThat(typingPill.select(".typing-dot[aria-hidden=true]")).hasSize(3);
         assertThat(typingRow.hasAttr("data-message-index")).isFalse();
         assertThat(typingRow.select(".message-actions, button, .message-shell")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("User skill markers render as input-style name chips without remove controls")
+    void renderDocument_whenUserMessageHasActiveSkills_rendersNamesInsideChips() {
+        MessageMeta meta = new MessageMeta(List.of("unslop", "debug-error"), false, "");
+        ConversationEntry entry = ConversationEntry.message(
+                Role.USER,
+                "[SKILL] unslop, debug-error\nImprove this response",
+                7,
+                List.of(),
+                List.of(new TextPart("[SKILL] unslop, debug-error\nImprove this response")),
+                meta
+        );
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.PREVIEW, false, false);
+
+        String html = new TranscriptDocumentRenderer().renderDocument(new TranscriptDocumentRequest(
+                false,
+                snapshot,
+                TranscriptAssetMode.INLINE_ALL,
+                "",
+                ""
+        ));
+        var document = Jsoup.parse(html);
+        var chipStrip = document.selectFirst(".message.user > .skill-chip-strip");
+
+        assertThat(chipStrip).isNotNull();
+        assertThat(chipStrip.select(".skill-chip").eachText()).containsExactly("unslop", "debug-error");
+        assertThat(chipStrip.select("button, .badge.skill")).isEmpty();
+        assertThat(document.select(".message.user").text()).doesNotContain("SKILL");
+        assertThat(html)
+                .contains("--chat4j-skill-chip-bg:", "--chat4j-skill-chip-border:", "--chat4j-skill-chip-fg:")
+                .contains(".skill-chip {");
+    }
+
+    @Test
+    @DisplayName("Markdown source mode replaces the raw skill marker with skill chips")
+    void renderDocument_whenMarkdownSourceHasActiveSkills_removesRawMarker() {
+        MessageMeta meta = new MessageMeta(List.of("unslop"), false, "");
+        ConversationEntry entry = ConversationEntry.message(
+                Role.USER,
+                "[SKILL] unslop\n**Improve** this response",
+                7,
+                List.of(),
+                List.of(new TextPart("[SKILL] unslop\n**Improve** this response")),
+                meta
+        );
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.MARKDOWN, false, false);
+
+        String html = new TranscriptDocumentRenderer().renderDocument(new TranscriptDocumentRequest(
+                false,
+                snapshot,
+                TranscriptAssetMode.INLINE_ALL,
+                "",
+                ""
+        ));
+        var document = Jsoup.parse(html);
+        var message = document.selectFirst(".message.user");
+
+        assertThat(message).isNotNull();
+        assertThat(message.select(".skill-chip").eachText()).containsExactly("unslop");
+        assertThat(message.selectFirst("pre").wholeText()).isEqualTo("**Improve** this response");
+        assertThat(message.text()).doesNotContain("[SKILL]", "SKILL unslop");
     }
 
     @Test

@@ -128,6 +128,18 @@ public final class JcefBrowserView {
         return browserPanel;
     }
 
+    public void releaseFocus() {
+        CefBrowser activeBrowser = browser;
+        if (activeBrowser == null || disposed) {
+            return;
+        }
+        try {
+            activeBrowser.setFocus(false);
+        } catch (Throwable ignored) {
+            // A native focus-release failure must not block Swing from focusing the composer.
+        }
+    }
+
     public void setTranscript(
             List<ConversationEntry> entries,
             RenderMode renderMode,

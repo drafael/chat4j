@@ -132,6 +132,7 @@ public class InputBar extends JPanel {
     private boolean skillRefreshShutdown;
     private AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
     private Runnable attachmentSelectionAppliedListener = () -> {};
+    private Runnable nativeFocusRelease = () -> {};
     private final List<ActionListener> sendListeners = new ArrayList<>();
     private final List<ActionListener> commandCenterListeners = new ArrayList<>();
     private final List<ActionListener> clearChatListeners = new ArrayList<>();
@@ -199,6 +200,12 @@ public class InputBar extends JPanel {
                         fireSend();
                     }
                 }
+            }
+        });
+        textArea.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                requestInputFocus();
             }
         });
 
@@ -1169,8 +1176,13 @@ public class InputBar extends JPanel {
         return normalized.substring(0, best) + ellipsis;
     }
 
+    public void setNativeFocusRelease(Runnable nativeFocusRelease) {
+        this.nativeFocusRelease = nativeFocusRelease == null ? () -> {} : nativeFocusRelease;
+    }
+
     public void requestInputFocus() {
         Runnable request = () -> {
+            nativeFocusRelease.run();
             // AWT can still report this text area as focused while WKWebView remains AppKit's first responder.
             if (SystemInfo.isMacOS) {
                 MacAwtFocusBridge.restoreAwtFirstResponder();

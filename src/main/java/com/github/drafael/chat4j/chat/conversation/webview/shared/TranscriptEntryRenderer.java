@@ -98,7 +98,7 @@ public final class TranscriptEntryRenderer {
         if (entry.kind() == ConversationEntryKind.ACTIVITY) {
             String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), snapshot);
             Document activityDocument = Jsoup.parse(renderedActivity);
-            prepareRenderedDocument(activityDocument, emptyList());
+            prepareRenderedDocument(activityDocument, emptyList(), emptyList(), false);
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
             return renderActivityEntry(entry, activityBody);
         }
@@ -107,7 +107,12 @@ public final class TranscriptEntryRenderer {
                 ? renderEntryContentHtml(entry.role(), entry.text(), snapshot)
                 : messageHtmlRenderer.render(entry.role(), snapshot.renderMode(), entry.parts(), snapshot.dark(), snapshot.palette());
         Document document = Jsoup.parse(rendered);
-        prepareRenderedDocument(document, entry.meta().citations());
+        prepareRenderedDocument(
+                document,
+                entry.meta().citations(),
+                entry.meta().activeSkills(),
+                entry.role() == Role.USER && snapshot.renderMode() == RenderMode.MARKDOWN
+        );
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String attachments = renderAttachmentStripHtml(entry.attachments());
@@ -221,7 +226,13 @@ public final class TranscriptEntryRenderer {
         );
     }
 
-    private void prepareRenderedDocument(Document document, List<CitationRef> citations) {
+    private void prepareRenderedDocument(
+            Document document,
+            List<CitationRef> citations,
+            List<String> activeSkills,
+            boolean rawMarkdownSource
+    ) {
+        renderSkillChips(document, activeSkills, rawMarkdownSource);
         renderCodeHighlights(document);
         renderMathFallbacks(document);
         replaceGeneratedImageSources(document);
@@ -240,6 +251,66 @@ public final class TranscriptEntryRenderer {
             table.addClass("without-header");
             rows.addClass("code-body");
         });
+    }
+
+    static void renderSkillChips(Document document, List<String> activeSkills, boolean rawMarkdownSource) {
+        List<Element> skillLines = document.select(".badge.skill").stream()
+                .map(Element::parent)
+                .distinct()
+                .toList();
+        List<String> requestedSkills = activeSkills == null ? emptyList() : activeSkills;
+        List<String> skillNames = requestedSkills.stream()
+                .filter(StringUtils::isNotBlank)
+                .map(String::trim)
+                .toList();
+        if (skillNames.isEmpty()) {
+            skillNames = skillLines.stream()
+                    .map(TranscriptEntryRenderer::skillNameFromLine)
+                    .filter(StringUtils::isNotBlank)
+                    .toList();
+        }
+        if (skillNames.isEmpty()) {
+            skillLines.forEach(Element::remove);
+            return;
+        }
+        if (rawMarkdownSource) {
+            removeRawMarkdownSkillMarker(document);
+        }
+
+        Element strip = new Element("div").addClass("skill-chip-strip");
+        skillNames.stream()
+                .map(skill -> new Element("span").addClass("skill-chip").text(skill))
+                .forEach(strip::appendChild);
+        if (skillLines.isEmpty()) {
+            if (document.body() != null) {
+                document.body().prependChild(strip);
+            }
+        } else {
+            skillLines.getFirst().before(strip);
+            skillLines.forEach(Element::remove);
+        }
+    }
+
+    private static void removeRawMarkdownSkillMarker(Document document) {
+        Element body = document.body();
+        if (body == null || body.childrenSize() != 1 || !Strings.CS.equals(body.child(0).tagName(), "pre")) {
+            return;
+        }
+
+        Element pre = body.child(0);
+        String source = pre.wholeText();
+        if (!Strings.CS.startsWith(source, "[SKILL] ")) {
+            return;
+        }
+
+        int lineEnd = source.indexOf('\n');
+        pre.text(lineEnd < 0 ? "" : source.substring(lineEnd + 1));
+    }
+
+    private static String skillNameFromLine(Element skillLine) {
+        Element copy = skillLine.clone();
+        copy.select(".badge.skill").remove();
+        return copy.text().trim();
     }
 
     static void replaceGeneratedImageSources(Document document) {

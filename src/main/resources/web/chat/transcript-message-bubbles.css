@@ -15,6 +15,31 @@
   margin-left: auto;
 }
 
+.skill-chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px 0;
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid var(--chat4j-skill-chip-border);
+  border-radius: 7px;
+  background: var(--chat4j-skill-chip-bg);
+  color: var(--chat4j-skill-chip-fg);
+  font-size: var(--chat4j-body-font-size);
+  font-weight: 400;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
 .row.typing {
   justify-content: flex-start;
 }
