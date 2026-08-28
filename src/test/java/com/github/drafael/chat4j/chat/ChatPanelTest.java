@@ -1788,6 +1788,42 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Codex reasoning selection follows the selected model's advertised levels")
+    void setSelectedModel_whenCodexModelChanges_clampsAndRestoresReasoningLevel() throws Exception {
+        ProviderRegistry.ProviderDef codexProvider = new ProviderRegistry.ProviderDef(
+                "OpenAI Codex",
+                "CODEX_ACCESS_TOKEN",
+                "https://chatgpt.com/backend-api/codex",
+                "https://chatgpt.com/backend-api/codex",
+                List.of("gpt-5.5", "gpt-5.6-sol", "gpt-5.6-luna"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(codexProvider.name(), codexProvider));
+            subject.setSelectedModel("OpenAI Codex > gpt-5.6-sol");
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.ULTRA);
+
+            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+
+            subject.setSelectedModel("OpenAI Codex > gpt-5.6-luna");
+
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.MAX);
+
+            subject.setSelectedModel("OpenAI Codex > gpt-5.5");
+
+            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+
+            subject.setSelectedModel("OpenAI Codex > gpt-5.6-sol");
+
+            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+        });
+    }
+
+    @Test
     @DisplayName("Switching conversations away and back restores previously selected reasoning level")
     void setSelectedModel_whenSwitchingAwayAndBack_restoresReasoningState() throws Exception {
         ProviderRegistry.ProviderDef reasoningProvider = new ProviderRegistry.ProviderDef(

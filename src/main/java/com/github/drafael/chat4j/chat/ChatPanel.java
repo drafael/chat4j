@@ -2299,6 +2299,7 @@ public class ChatPanel extends JPanel {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             nativeWebSearchOutcome = NativeWebSearchOutcome.UNSUPPORTED;
+            inputBar.setAvailableReasoningLevels(ReasoningLevel.standardLevels());
             inputBar.setThinkingAvailable(false);
             applyWebSearchPresentation();
             inputBar.setAgentModeAvailable(false);
@@ -2315,6 +2316,10 @@ public class ChatPanel extends JPanel {
         boolean initialSupportsTools = togetherProvider
                 ? TogetherModelSupport.supportsTools(providerDef.baseUrl(), modelId)
                 : ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId);
+        List<ReasoningLevel> availableReasoningLevels = modelCacheService
+                .findCodexReasoningLevels(providerName, modelId)
+                .orElse(ReasoningLevel.standardLevels());
+        inputBar.setAvailableReasoningLevels(availableReasoningLevels);
         inputBar.setThinkingAvailable(initialSupportsThinking);
         applyNativeWebSearchOutcome(resolveCachedNativeWebSearchOutcome(providerDef, modelId));
         inputBar.setAgentModeAvailable(!nativeWebSearchOutcome.required() && initialSupportsTools);
@@ -6074,7 +6079,7 @@ public class ChatPanel extends JPanel {
 
     private void notifyModelCatalogChanged() {
         if (installedProviderScope >= 0L
-                && Strings.CS.equals(selectedProviderName, COPILOT_PROVIDER_NAME)
+                && Strings.CS.equalsAny(selectedProviderName, COPILOT_PROVIDER_NAME, CODEX_PROVIDER_NAME)
                 && providerMap.containsKey(selectedProviderName)) {
             updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
         }

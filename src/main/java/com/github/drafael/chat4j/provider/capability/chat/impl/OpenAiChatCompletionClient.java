@@ -715,6 +715,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             case MEDIUM -> Optional.of(ReasoningEffort.MEDIUM);
             case HIGH -> Optional.of(ReasoningEffort.HIGH);
             case EXTRA_HIGH -> Optional.of(ReasoningEffort.XHIGH);
+            case MAX, ULTRA -> Optional.of(ReasoningEffort.MAX);
         };
     }
 
@@ -731,6 +732,22 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             case MEDIUM -> List.of(ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
             case HIGH -> List.of(ReasoningLevel.HIGH, ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
             case EXTRA_HIGH -> List.of(
+                    ReasoningLevel.EXTRA_HIGH,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.OFF
+            );
+            case MAX -> List.of(
+                    ReasoningLevel.MAX,
+                    ReasoningLevel.EXTRA_HIGH,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.OFF
+            );
+            case ULTRA -> List.of(
+                    ReasoningLevel.MAX,
                     ReasoningLevel.EXTRA_HIGH,
                     ReasoningLevel.HIGH,
                     ReasoningLevel.MEDIUM,

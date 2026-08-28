@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -49,6 +50,48 @@ class InputBarValidationTest {
         assertThat(thinkingButton.isVisible()).isTrue();
         assertThat(subject.isThinkingEnabled()).isTrue();
         assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+    }
+
+    @Test
+    @DisplayName("Requested reasoning is preserved while the effective level follows the selected model")
+    void setAvailableReasoningLevels_whenRequestedLevelIsUnsupported_clampsWithoutDiscardingRequest() throws Exception {
+        InputBar subject = new InputBar();
+        subject.setThinkingAvailable(true);
+        subject.setReasoningLevel(ReasoningLevel.ULTRA);
+
+        subject.setAvailableReasoningLevels(List.of(
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH
+        ));
+
+        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+        assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+        assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.EXTRA_HIGH).isSelected()).isTrue();
+        assertThat(readReasoningLevelItems(subject)).doesNotContainKey(ReasoningLevel.ULTRA);
+
+        subject.setAvailableReasoningLevels(List.of(
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH,
+                ReasoningLevel.MAX
+        ));
+
+        assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.MAX);
+
+        subject.setAvailableReasoningLevels(List.of(
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH,
+                ReasoningLevel.MAX,
+                ReasoningLevel.ULTRA
+        ));
+
+        assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+        assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.ULTRA).isSelected()).isTrue();
     }
 
     @Test
@@ -449,6 +492,13 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("thinkingButton");
         field.setAccessible(true);
         return (JButton) field.get(inputBar);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<ReasoningLevel, JRadioButtonMenuItem> readReasoningLevelItems(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("reasoningLevelItems");
+        field.setAccessible(true);
+        return (Map<ReasoningLevel, JRadioButtonMenuItem>) field.get(inputBar);
     }
 
     private JToggleButton readAgentModeButton(InputBar inputBar) throws Exception {

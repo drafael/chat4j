@@ -160,7 +160,7 @@ public final class TogetherModelSupport {
             case KIMI_K3 -> kimiK3Request(level);
             case GPT_OSS -> gptOssRequest(level);
             case HIGH_MAX -> level.enabled()
-                    ? ReasoningRequest.effort(level == ReasoningLevel.EXTRA_HIGH ? "max" : "high")
+                    ? ReasoningRequest.effort(level.ordinal() >= ReasoningLevel.EXTRA_HIGH.ordinal() ? "max" : "high")
                     : ReasoningRequest.enabled(false);
             case NEMOTRON -> level.enabled()
                     ? ReasoningRequest.nemotron(level == ReasoningLevel.LOW || level == ReasoningLevel.MEDIUM)
@@ -183,7 +183,7 @@ public final class TogetherModelSupport {
         return switch (level) {
             case OFF, LOW -> ReasoningRequest.effort("low");
             case MEDIUM, HIGH -> ReasoningRequest.effort("high");
-            case EXTRA_HIGH -> ReasoningRequest.effort("max");
+            case EXTRA_HIGH, MAX, ULTRA -> ReasoningRequest.effort("max");
         };
     }
 
@@ -192,7 +192,7 @@ public final class TogetherModelSupport {
             case OFF -> ReasoningRequest.none();
             case LOW -> ReasoningRequest.effort("low");
             case MEDIUM -> ReasoningRequest.effort("medium");
-            case HIGH, EXTRA_HIGH -> ReasoningRequest.effort("high");
+            case HIGH, EXTRA_HIGH, MAX, ULTRA -> ReasoningRequest.effort("high");
         };
     }
 

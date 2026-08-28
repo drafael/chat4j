@@ -281,7 +281,7 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
             case LOW -> 1_024L;
             case MEDIUM -> 2_048L;
             case HIGH -> 4_096L;
-            case EXTRA_HIGH -> 8_192L;
+            case EXTRA_HIGH, MAX, ULTRA -> 8_192L;
         };
     }
 
@@ -290,7 +290,7 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
             case OFF -> throw new IllegalArgumentException("Disabled thinking has no output effort.");
             case LOW -> OutputConfig.Effort.LOW;
             case MEDIUM, HIGH -> OutputConfig.Effort.HIGH;
-            case EXTRA_HIGH -> OutputConfig.Effort.MAX;
+            case EXTRA_HIGH, MAX, ULTRA -> OutputConfig.Effort.MAX;
         };
     }
 

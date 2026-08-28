@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -40,12 +41,73 @@ class CodexLocalModelCacheTest {
     }
 
     @Test
-    @DisplayName("Missing Codex local cache uses the built-in model list successfully")
+    @DisplayName("Missing Codex local cache uses current built-in models and reasoning levels")
     void readSnapshot_whenLocalCacheIsMissing_returnsSuccessfulBuiltinSnapshot() {
         CodexLocalModelCache.Snapshot snapshot = CodexLocalModelCache.readSnapshot(tempDir);
 
         assertThat(snapshot.loadedSuccessfully()).isTrue();
-        assertThat(snapshot.models()).contains("gpt-5.4");
+        assertThat(snapshot.models()).contains("gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna");
+        assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.5")).containsExactly(
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH
+        );
+        assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.6-sol")).containsExactly(
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH,
+                ReasoningLevel.MAX,
+                ReasoningLevel.ULTRA
+        );
+        assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.6-terra"))
+                .isEqualTo(snapshot.reasoningLevelsByModel().get("gpt-5.6-sol"));
+        assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.6-luna")).containsExactly(
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH,
+                ReasoningLevel.MAX
+        );
+    }
+
+    @Test
+    @DisplayName("Codex local cache publishes known reasoning efforts in canonical order")
+    void readSnapshot_whenReasoningMetadataIsPresent_returnsModelSpecificLevels() throws Exception {
+        Path codexDirectory = tempDir.resolve(".codex");
+        Files.createDirectories(codexDirectory);
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {
+                  "models": [
+                    {
+                      "slug": "future-codex",
+                      "supported_reasoning_levels": [
+                        {"effort": "ultra"},
+                        {"effort": "future"},
+                        {"effort": "low"},
+                        {"effort": "max"},
+                        {"effort": "xhigh"}
+                      ]
+                    },
+                    {
+                      "slug": "hidden-codex",
+                      "visibility": "hide",
+                      "supported_reasoning_levels": [{"effort": "ultra"}]
+                    }
+                  ]
+                }
+                """);
+
+        CodexLocalModelCache.Snapshot snapshot = CodexLocalModelCache.readSnapshot(tempDir);
+
+        assertThat(snapshot.reasoningLevelsByModel().get("future-codex")).containsExactly(
+                ReasoningLevel.LOW,
+                ReasoningLevel.EXTRA_HIGH,
+                ReasoningLevel.MAX,
+                ReasoningLevel.ULTRA
+        );
+        assertThat(snapshot.reasoningLevelsByModel()).doesNotContainKey("hidden-codex");
     }
 
     @Test

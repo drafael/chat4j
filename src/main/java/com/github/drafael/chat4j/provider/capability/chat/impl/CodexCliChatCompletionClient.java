@@ -1032,6 +1032,8 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             case MEDIUM -> "medium";
             case HIGH -> "high";
             case EXTRA_HIGH -> "xhigh";
+            case MAX -> "max";
+            case ULTRA -> "ultra";
             case OFF -> throw new IllegalStateException("Disabled reasoning has no Codex effort value");
         });
     }

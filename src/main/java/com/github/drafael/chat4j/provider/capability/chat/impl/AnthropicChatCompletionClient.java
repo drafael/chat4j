@@ -355,7 +355,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
             case LOW -> 1024;
             case MEDIUM -> 2048;
             case HIGH -> 4096;
-            case EXTRA_HIGH -> 8192;
+            case EXTRA_HIGH, MAX, ULTRA -> 8192;
         };
     }
 

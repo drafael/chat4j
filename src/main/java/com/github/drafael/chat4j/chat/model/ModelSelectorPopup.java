@@ -1121,8 +1121,14 @@ public class ModelSelectorPopup extends JDialog {
             try {
                 modelCacheService.refreshCodexLocalModels();
                 SwingUtilities.invokeLater(() -> {
-                    if (codexLocalRefreshCounter.get() == refreshId) {
-                        refreshProviderFromCache(CODEX_PROVIDER_NAME);
+                    if (codexLocalRefreshCounter.get() != refreshId) {
+                        return;
+                    }
+                    ProviderEntry entry = entries.get(CODEX_PROVIDER_NAME);
+                    List<String> previousModels = entry == null ? emptyList() : entry.models;
+                    refreshProviderFromCache(CODEX_PROVIDER_NAME);
+                    if (entry != null && previousModels.equals(entry.models) && onModelsChanged != null) {
+                        onModelsChanged.run();
                     }
                 });
             } catch (Exception e) {

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.persistence.model;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -749,6 +750,28 @@ class ProviderModelCacheServiceTest {
 
         assertThat(subject.refreshCodexLocalModels())
                 .contains("gpt-5.5", "gpt-5.4", "gpt-5.3-codex");
+    }
+
+    @Test
+    @DisplayName("OpenAI Codex reasoning levels are published with the successful local snapshot")
+    void findCodexReasoningLevels_whenLocalSnapshotRefreshes_returnsModelMetadata() {
+        var subject = new ProviderModelCacheService(
+                new InMemoryModelCache(),
+                fixedClock("2026-04-10T11:00:00Z"),
+                Duration.ofHours(12),
+                false,
+                () -> new CodexLocalModelCache.Snapshot(
+                        List.of("gpt-5.6-sol"),
+                        emptyList(),
+                        Map.of("gpt-5.6-sol", List.of(ReasoningLevel.LOW, ReasoningLevel.MAX, ReasoningLevel.ULTRA))
+                )
+        );
+
+        subject.refreshCodexLocalModels();
+
+        assertThat(subject.findCodexReasoningLevels("OpenAI Codex", "gpt-5.6-sol"))
+                .contains(List.of(ReasoningLevel.LOW, ReasoningLevel.MAX, ReasoningLevel.ULTRA));
+        assertThat(subject.findCodexReasoningLevels("OpenAI", "gpt-5.6-sol")).isEmpty();
     }
 
     @Test

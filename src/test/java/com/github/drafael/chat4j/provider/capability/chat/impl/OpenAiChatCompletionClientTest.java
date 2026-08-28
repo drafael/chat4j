@@ -767,6 +767,17 @@ class OpenAiChatCompletionClientTest {
     }
 
     @Test
+    @DisplayName("OpenAI reasoning effort maps maximum and ultra to the API maximum")
+    void toOpenAiReasoningEffort_whenMaximumOrUltraSelected_returnsMax() throws Exception {
+        assertThat(invokeToOpenAiReasoningEffort(ReasoningLevel.MAX)).contains(ReasoningEffort.MAX);
+        assertThat(invokeToOpenAiReasoningEffort(ReasoningLevel.ULTRA)).contains(ReasoningEffort.MAX);
+        assertThat(invokeReasoningAttempts(ReasoningLevel.ULTRA)).startsWith(
+                ReasoningLevel.MAX,
+                ReasoningLevel.EXTRA_HIGH
+        );
+    }
+
+    @Test
     @DisplayName("Unsupported reasoning effort detection matches invalid reasoning parameter errors")
     void isUnsupportedReasoningEffort_whenReasoningEffortIsInvalid_returnsTrue() throws Exception {
         Exception exception = new IllegalStateException("invalid reasoning_effort: xhigh");

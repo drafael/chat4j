@@ -212,6 +212,12 @@ class CodexCliChatCompletionClientTest {
         Map<String, Object> turnParams = (Map<String, Object>) subject
                 .turnStartRequest("thread-1", "prompt", ReasoningLevel.HIGH)
                 .get("params");
+        Map<String, Object> maxTurnParams = (Map<String, Object>) subject
+                .turnStartRequest("thread-1", "prompt", ReasoningLevel.MAX)
+                .get("params");
+        Map<String, Object> ultraTurnParams = (Map<String, Object>) subject
+                .turnStartRequest("thread-1", "prompt", ReasoningLevel.ULTRA)
+                .get("params");
 
         assertThat(threadParams)
                 .containsEntry("ephemeral", true)
@@ -219,6 +225,8 @@ class CodexCliChatCompletionClientTest {
                 .containsEntry("sandbox", "read-only")
                 .containsEntry("model", "gpt-5.4-mini");
         assertThat(turnParams).containsEntry("effort", "high");
+        assertThat(maxTurnParams).containsEntry("effort", "max");
+        assertThat(ultraTurnParams).containsEntry("effort", "ultra");
     }
 
     @Test
@@ -228,6 +236,10 @@ class CodexCliChatCompletionClientTest {
 
         assertThat(subject.execCommand("gpt-5.4-mini", outputFile, ReasoningLevel.EXTRA_HIGH, false))
                 .containsSubsequence("-c", "model_reasoning_effort=\"xhigh\"");
+        assertThat(subject.execCommand("gpt-5.6-luna", outputFile, ReasoningLevel.MAX, false))
+                .containsSubsequence("-c", "model_reasoning_effort=\"max\"");
+        assertThat(subject.execCommand("gpt-5.6-sol", outputFile, ReasoningLevel.ULTRA, false))
+                .containsSubsequence("-c", "model_reasoning_effort=\"ultra\"");
     }
 
     @Test
