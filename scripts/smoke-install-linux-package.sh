@@ -34,8 +34,9 @@ case "$package_type" in
         launcher="/opt/chat4j/bin/chat4j"
         desktop_file="/opt/chat4j/lib/chat4j-chat4j.desktop"
         icon="/opt/chat4j/lib/chat4j.png"
-        registered_desktop_file="/usr/share/applications/chat4j-chat4j.desktop"
-        if [[ ! -x "$launcher" || ! -f "$desktop_file" || ! -f "$icon" || ! -f "$registered_desktop_file" ]]; then
+        local_registered_desktop_file="/usr/local/share/applications/chat4j-chat4j.desktop"
+        system_registered_desktop_file="/usr/share/applications/chat4j-chat4j.desktop"
+        if [[ ! -x "$launcher" || ! -f "$desktop_file" || ! -f "$icon" || ( ! -f "$local_registered_desktop_file" && ! -f "$system_registered_desktop_file" ) ]]; then
             echo "Installed RPM is missing its launcher, desktop resource, icon, or desktop registration." >&2
             exit 1
         fi
