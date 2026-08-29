@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.8.49</version>
+    <version>26.8.50</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -988,6 +988,42 @@
                                         <argument>--linux-shortcut</argument>
                                         <argument>--linux-menu-group</argument>
                                         <argument>Network</argument>
+                                        <argument>--app-version</argument>
+                                        <argument>${project.version}</argument>
+                                        <argument>--dest</argument>
+                                        <argument>${project.build.directory}/dist</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>jpackage-linux-rpm</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <skip>${chat4j.jpackage.linux.skip}</skip>
+                                    <executable>jpackage</executable>
+                                    <arguments>
+                                        <argument>--input</argument>
+                                        <argument>${chat4j.jpackage.input.dir}</argument>
+                                        <argument>--name</argument>
+                                        <argument>chat4j</argument>
+                                        <argument>--main-jar</argument>
+                                        <argument>${project.build.finalName}.jar</argument>
+                                        <argument>--main-class</argument>
+                                        <argument>com.github.drafael.chat4j.App</argument>
+                                        <argument>--type</argument>
+                                        <argument>rpm</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--enable-preview</argument>
+                                        <argument>--icon</argument>
+                                        <argument>${project.basedir}/src/main/resources/icons/icon.png</argument>
+                                        <argument>--linux-shortcut</argument>
+                                        <argument>--linux-menu-group</argument>
+                                        <argument>Network</argument>
+                                        <argument>--linux-rpm-license-type</argument>
+                                        <argument>Apache-2.0</argument>
                                         <argument>--app-version</argument>
                                         <argument>${project.version}</argument>
                                         <argument>--dest</argument>

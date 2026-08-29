@@ -1,0 +1,43 @@
+pkgname=chat4j
+pkgver=@CHAT4J_VERSION@
+pkgrel=1
+pkgdesc="Desktop AI chat client"
+arch=('x86_64')
+url="https://github.com/drafael/chat4j"
+license=('Apache-2.0')
+depends=(
+    'alsa-lib'
+    'freetype2'
+    'gcc-libs'
+    'glibc'
+    'gtk3'
+    'libx11'
+    'libxext'
+    'libxi'
+    'libxrender'
+    'libxtst'
+    'webkit2gtk-4.1'
+    'zlib'
+)
+options=('!strip')
+source=(
+    "chat4j-app-image-${pkgver}.tar.gz"
+    'chat4j.desktop'
+    'chat4j.png'
+)
+sha256sums=(
+    '@APP_IMAGE_SHA256@'
+    '@DESKTOP_SHA256@'
+    '@ICON_SHA256@'
+)
+
+package() {
+    install -d "${pkgdir}/opt"
+    cp -a "${srcdir}/chat4j" "${pkgdir}/opt/chat4j"
+    chown -R root:root "${pkgdir}/opt/chat4j"
+
+    install -Dm644 "${srcdir}/chat4j.desktop" "${pkgdir}/usr/share/applications/chat4j.desktop"
+    install -Dm644 "${srcdir}/chat4j.png" "${pkgdir}/usr/share/icons/hicolor/512x512/apps/chat4j.png"
+    install -d "${pkgdir}/usr/bin"
+    ln -s /opt/chat4j/bin/chat4j "${pkgdir}/usr/bin/chat4j"
+}

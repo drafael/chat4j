@@ -223,7 +223,7 @@ setx OPENAI_API_KEY "sk-..."
 ## Packaging
 
 Native installers are built with `jpackage` via Maven profiles.
-Each profile must run on the target OS (cross-packaging is not supported).
+Each profile must run on the target OS because `jpackage` does not support cross-platform packaging.
 
 Use OS-specific profiles:
 
@@ -234,11 +234,25 @@ mvn -Pjpackage-mac verify
 # Windows (.msi) — requires WiX Toolset 3.x
 mvn -Pjpackage-win verify
 
-# Linux (.deb) — requires dpkg
+# Linux (.deb and .rpm) — requires dpkg tooling and rpmbuild
 mvn -Pjpackage-linux verify
 ```
 
-Output artifacts are written to `target/dist/`.
+The native artifacts are written to `target/dist/`. On Arch Linux, install the JDK 21, Maven, and `base-devel` packages and run:
+
+```bash
+scripts/build-arch-package.sh "$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+```
+
+That script first creates a self-contained `jpackage --type app-image`, then stages it through `packaging/arch/PKGBUILD.in` with `makepkg`. The resulting `.pkg.tar.zst` is written to `target/arch-package-build/`. `makepkg` must run as a non-root user; the Arch release job uses the official `archlinux:base-devel` container and creates an unprivileged builder account for that reason. The release recipe targets `x86_64`, matching the hosted Linux runner. It disables a second stripping pass because the bundled runtime image has already been prepared by `jpackage`.
+
+All release packages remain unsigned and are covered by the release-wide `SHA256SUMS.txt`; the RPM and Arch additions do not introduce package signing. The Arch build passes `makepkg --nosign` explicitly so a builder's local `makepkg.conf` cannot change that release policy.
+
+Packaging references:
+
+- [JDK 21 `jpackage` manual](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jpackage.html) — supported package types and same-platform requirement.
+- [Arch Linux `PKGBUILD(5)`](https://man.archlinux.org/man/PKGBUILD.5.en) and [`makepkg(8)`](https://man.archlinux.org/man/makepkg.8.en) — package metadata, checksums, `package()`, and build behavior.
+- [GitHub Actions workflow syntax for job containers](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idcontainer) and [workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts) — the Arch build environment and release-asset transfer.
 
 ## Release automation
 
@@ -249,7 +263,7 @@ git tag v26.6.13
 git push origin v26.6.13
 ```
 
-The release workflow publishes the shaded jar, macOS `.dmg`, Windows `.msi`, Linux `.deb`, SBOM files, and SHA-256 checksums.
+The release workflow publishes the shaded jar, macOS `.dmg`, Windows `.msi`, Linux `.deb` and `.rpm`, Arch Linux `.pkg.tar.zst`, SBOM files, and SHA-256 checksums.
 
 ## License
 
