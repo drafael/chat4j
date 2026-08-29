@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Chat4J
+Comment=Desktop AI chat client
+Exec=/opt/chat4j/bin/chat4j
+Icon=chat4j
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=chat4j

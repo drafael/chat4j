@@ -48,6 +48,11 @@ jobs:
         shell: bash
         run: scripts/check-http-json-boundaries.sh
 
+      - name: Check Linux release package contract
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/test-linux-release-packages.sh
+
       - name: Run tests
         shell: bash
         run: mvn -B -ntp test

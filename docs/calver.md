@@ -80,9 +80,9 @@ Dependency update PRs should keep the dependency labels provided by Dependabot. 
 All jpackage profiles use `${project.version}` for `--app-version`:
 - `jpackage-mac`
 - `jpackage-win`
-- `jpackage-linux`
+- `jpackage-linux` (both DEB and RPM)
 
-So installer version and Maven version are aligned.
+The Arch build script rejects a requested version that differs from the Maven project version, passes that version to `jpackage --app-version`, and filters the same value into the generated `PKGBUILD` `pkgver`. Native package versions and the Maven version therefore stay aligned.
 
 ## Build-time version validation
 
