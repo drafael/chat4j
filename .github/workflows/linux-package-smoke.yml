@@ -1,0 +1,90 @@
+name: Linux package smoke
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/linux-package-smoke.yml'
+      - 'pom.xml'
+      - 'README.md'
+      - 'docs/calver.md'
+      - 'packaging/**'
+      - 'scripts/build-arch-package.sh'
+      - 'scripts/build-rpm-package.sh'
+      - 'scripts/install-linux-package-build-dependencies.sh'
+      - 'scripts/test-linux-release-packages.sh'
+      - 'scripts/verify-linux-package.sh'
+      - 'scripts/chat4j-doctor.sh'
+      - 'src/jpackage/**'
+      - 'src/main/resources/icons/icon.png'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    name: Resolve package version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.project.outputs.version }}
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Read Maven project version
+        id: project
+        run: echo "version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)" >> "$GITHUB_OUTPUT"
+
+  rpm:
+    name: Smoke build Fedora RPM package
+    runs-on: ubuntu-latest
+    needs: metadata
+    container: fedora:44
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v7
+
+      - name: Install Fedora RPM build dependencies
+        run: scripts/install-linux-package-build-dependencies.sh rpm
+
+      - name: Build and verify RPM package
+        run: scripts/build-rpm-package.sh "${{ needs.metadata.outputs.version }}"
+
+  arch:
+    name: Smoke build Arch Linux package
+    runs-on: ubuntu-latest
+    needs: metadata
+    container: archlinux:base-devel-20260823.0.578598
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v7
+
+      - name: Install Arch packaging dependencies
+        run: |
+          scripts/install-linux-package-build-dependencies.sh arch
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build and verify Arch package
+        run: |
+          # makepkg intentionally refuses to run as root; job containers default to root.
+          runuser -u builder -- env HOME=/home/builder LC_ALL=C.UTF-8 \
+            bash -c 'cd "$1" && scripts/build-arch-package.sh "$2"' bash \
+            "$GITHUB_WORKSPACE" "${{ needs.metadata.outputs.version }}"

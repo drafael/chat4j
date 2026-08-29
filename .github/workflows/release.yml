@@ -124,20 +124,21 @@ jobs:
           - name: macOS DMG
             os: macos-latest
             profiles: jpackage-mac,jpackage-on-mac
+            extra_args: ''
             artifact-name: macos-dmg
             glob: target/dist/*.dmg
           - name: Windows MSI
             os: windows-latest
             profiles: jpackage-win,jpackage-on-windows
+            extra_args: ''
             artifact-name: windows-msi
             glob: target/dist/*.msi
-          - name: Linux DEB and RPM
+          - name: Linux DEB
             os: ubuntu-latest
             profiles: jpackage-linux,jpackage-on-linux
-            artifact-name: linux-deb-rpm
-            glob: |
-              target/dist/*.deb
-              target/dist/*.rpm
+            extra_args: -Dchat4j.jpackage.rpm.skip=true
+            artifact-name: linux-deb
+            glob: target/dist/*.deb
 
     steps:
       - name: Check out sources
@@ -156,8 +157,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # jpackage delegates DEB and RPM assembly to the platform package tools.
-          sudo apt-get install -y fakeroot dpkg-dev rpm libgtk-3-0
+          # jpackage delegates DEB assembly to the platform package tools.
+          sudo apt-get install -y fakeroot dpkg-dev libgtk-3-0
           sudo apt-get install -y libwebkit2gtk-4.1-0 || sudo apt-get install -y libwebkit2gtk-4.0-37
 
       - name: Install WiX Toolset
@@ -171,7 +172,7 @@ jobs:
           }
 
       - name: Build native package
-        run: mvn -B -ntp -DskipTests "-P${{ matrix.profiles }}" verify
+        run: mvn -B -ntp -DskipTests "-P${{ matrix.profiles }}" ${{ matrix.extra_args }} verify
 
       - name: Upload native package
         uses: actions/upload-artifact@v7
@@ -180,11 +181,38 @@ jobs:
           path: ${{ matrix.glob }}
           if-no-files-found: error
 
+  rpm:
+    name: Build Fedora RPM package
+    runs-on: ubuntu-latest
+    needs: metadata
+    container: fedora:44
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Install Fedora RPM build dependencies
+        run: scripts/install-linux-package-build-dependencies.sh rpm
+
+      - name: Build and verify RPM package
+        run: scripts/build-rpm-package.sh "${{ needs.metadata.outputs.version }}"
+
+      - name: Upload RPM package
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-rpm
+          path: target/dist/*.rpm
+          if-no-files-found: error
+
   arch:
     name: Build Arch Linux package
     runs-on: ubuntu-latest
     needs: metadata
-    container: archlinux:base-devel
+    container: archlinux:base-devel-20260823.0.578598
     defaults:
       run:
         shell: bash
@@ -196,9 +224,7 @@ jobs:
 
       - name: Install Arch packaging dependencies
         run: |
-          pacman -Syu --needed --noconfirm \
-            alsa-lib freetype2 gcc-libs git glibc gtk3 jdk21-openjdk libx11 libxext \
-            libxi libxrender libxtst maven webkit2gtk-4.1 zlib
+          scripts/install-linux-package-build-dependencies.sh arch
           useradd --create-home builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
@@ -219,10 +245,13 @@ jobs:
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
+    # Publication is intentionally atomic: every requested artifact job must
+    # succeed, and each upload fails when its package is missing.
     needs:
       - metadata
       - jar
       - native
+      - rpm
       - arch
     steps:
       - name: Check out sources

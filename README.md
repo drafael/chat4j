@@ -234,25 +234,34 @@ mvn -Pjpackage-mac verify
 # Windows (.msi) — requires WiX Toolset 3.x
 mvn -Pjpackage-win verify
 
-# Linux (.deb and .rpm) — requires dpkg tooling and rpmbuild
-mvn -Pjpackage-linux verify
+# Ubuntu/Debian (.deb) — requires fakeroot and dpkg-dev
+mvn -Dchat4j.jpackage.rpm.skip=true -Pjpackage-linux verify
 ```
 
-The native artifacts are written to `target/dist/`. On Arch Linux, install the JDK 21, Maven, and `base-devel` packages and run:
+The native artifacts are written to `target/dist/`. Build an RPM on a supported Fedora host so JDK 21 `jpackage` can resolve native runtime libraries through the host RPM database. Install the Fedora dependencies as root, then build and verify the package as your regular user:
 
 ```bash
+sudo scripts/install-linux-package-build-dependencies.sh rpm
+scripts/build-rpm-package.sh "$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+```
+
+On Arch Linux, install the full set of build and declared runtime dependencies, then run the package build as your regular non-root user:
+
+```bash
+sudo scripts/install-linux-package-build-dependencies.sh arch
 scripts/build-arch-package.sh "$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
 ```
 
-That script first creates a self-contained `jpackage --type app-image`, then stages it through `packaging/arch/PKGBUILD.in` with `makepkg`. The resulting `.pkg.tar.zst` is written to `target/arch-package-build/`. `makepkg` must run as a non-root user; the Arch release job uses the official `archlinux:base-devel` container and creates an unprivileged builder account for that reason. The release recipe targets `x86_64`, matching the hosted Linux runner. It disables a second stripping pass because the bundled runtime image has already been prepared by `jpackage`.
+The Arch script first creates a self-contained `jpackage --type app-image`, then stages it through `packaging/arch/PKGBUILD.in` with `makepkg` and verifies package metadata, installed paths, the command link, and desktop launcher. The resulting `.pkg.tar.zst` is written to `target/arch-package-build/`. Never run the build script or `makepkg` as root. The release and pull-request smoke jobs use the official, dated `archlinux:base-devel-20260823.0.578598` image and create an unprivileged builder account. They still perform Arch's required full package update before building. The recipe targets `x86_64`, matching the hosted Linux runner, and disables a second stripping pass because the bundled runtime image has already been prepared by `jpackage`.
 
 All release packages remain unsigned and are covered by the release-wide `SHA256SUMS.txt`; the RPM and Arch additions do not introduce package signing. The Arch build passes `makepkg --nosign` explicitly so a builder's local `makepkg.conf` cannot change that release policy.
 
 Packaging references:
 
-- [JDK 21 `jpackage` manual](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jpackage.html) — supported package types and same-platform requirement.
-- [Arch Linux `PKGBUILD(5)`](https://man.archlinux.org/man/PKGBUILD.5.en) and [`makepkg(8)`](https://man.archlinux.org/man/makepkg.8.en) — package metadata, checksums, `package()`, and build behavior.
-- [GitHub Actions workflow syntax for job containers](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idcontainer) and [workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts) — the Arch build environment and release-asset transfer.
+- [OpenJDK 21 `jpackage` source manual](https://github.com/openjdk/jdk21u/blob/master/src/jdk.jpackage/share/man/jpackage.1) — supported package types, platform package tools, and Linux package options.
+- [Fedora Java installation guidance](https://docs.fedoraproject.org/en-US/quick-docs/installing-java/) and [RPM dependency generators](https://rpm.org/docs/latest/manual/dependency_generators.html) — the RPM-native JDK host and generated dependency model.
+- [Arch Linux `PKGBUILD(5)`](https://man.archlinux.org/man/PKGBUILD.5.en), [`makepkg(8)`](https://man.archlinux.org/man/makepkg.8.en), and [official Arch container tags](https://hub.docker.com/_/archlinux) — package metadata, checksums, non-root builds, and the pinned build image.
+- [GitHub Actions workflow syntax for job containers](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idcontainer) and [workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts) — distro-native build environments and release-asset transfer.
 
 ## Release automation
 
@@ -263,7 +272,7 @@ git tag v26.6.13
 git push origin v26.6.13
 ```
 
-The release workflow publishes the shaded jar, macOS `.dmg`, Windows `.msi`, Linux `.deb` and `.rpm`, Arch Linux `.pkg.tar.zst`, SBOM files, and SHA-256 checksums.
+The release workflow publishes the shaded jar, macOS `.dmg`, Windows `.msi`, Linux `.deb` and `.rpm`, Arch Linux `.pkg.tar.zst`, SBOM files, and SHA-256 checksums. Publication is deliberately atomic: every requested artifact job is a prerequisite of the publish job, and a missing package fails its upload, so the workflow never silently creates a partial release.
 
 ## License
 

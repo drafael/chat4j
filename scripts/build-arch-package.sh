@@ -70,5 +70,6 @@ sed \
         echo "Expected exactly one Arch package from makepkg." >&2
         exit 1
     fi
+    "$repo_root/scripts/verify-linux-package.sh" arch "${packages[0]}" "$version"
     echo "Built Arch package: ${packages[0]}"
 )
