@@ -18,7 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import static com.github.drafael.chat4j.chat.AssistantMessageNormalizer.mergeAssistantRun;
 import static com.github.drafael.chat4j.chat.AssistantMessageNormalizer.normalizeLoadedHistory;
 import static com.github.drafael.chat4j.chat.AssistantMessageNormalizer.normalizeThinkingText;
 import static java.util.Collections.emptyList;
@@ -85,7 +84,7 @@ class AssistantMessageNormalizerTest {
 
     @Test
     @DisplayName("The last nonblank assistant supplies primary content while activities aggregate in order")
-    void mergeAssistantRun_whenRunHasMultiplePayloads_preservesPrimaryAndAggregatesActivities() {
+    void normalizeLoadedHistory_whenRunHasMultiplePayloads_preservesPrimaryAndAggregatesActivities() {
         AgentToolActivityMeta repeatedTool = new AgentToolActivityMeta(
                 "read-1",
                 "read",
@@ -164,8 +163,13 @@ class AssistantMessageNormalizerTest {
                 )
         );
 
-        Message merged = mergeAssistantRun(List.of(first, primary, trailingArtifact));
+        List<Message> messages = new ArrayList<>(List.of(first, primary, trailingArtifact));
+        List<Message> originalMessages = List.copyOf(messages);
 
+        List<Message> normalized = normalizeLoadedHistory(messages);
+
+        assertThat(normalized).hasSize(1);
+        Message merged = normalized.getFirst();
         assertThat(merged.role()).isEqualTo(Role.ASSISTANT);
         assertThat(merged.parts()).containsExactlyElementsOf(primaryParts);
         assertThat(merged.timestamp()).isEqualTo(primaryTimestamp);
@@ -192,11 +196,13 @@ class AssistantMessageNormalizerTest {
         assertThat(first.meta().assistantThinking()).isEqualTo("first thinking");
         assertThat(primary.meta().assistantThinking()).contains("\u001B[32m");
         assertThat(trailingArtifact.meta().assistantThinking()).contains("\u200B");
+        assertThat(messages).containsExactlyElementsOf(originalMessages);
+        assertThat(messages).containsExactly(first, primary, trailingArtifact);
     }
 
     @Test
     @DisplayName("An all-blank assistant run uses its last message as the primary")
-    void mergeAssistantRun_whenAllAssistantContentIsBlank_usesLastMessageAsPrimary() {
+    void normalizeLoadedHistory_whenAllAssistantContentIsBlank_usesLastMessageAsPrimary() {
         Message first = new Message(
                 Role.ASSISTANT,
                 List.of(new TextPart(" ")),
@@ -212,25 +218,21 @@ class AssistantMessageNormalizerTest {
                 new MessageMeta(List.of("last"), List.of("last fallback"), true, "last error")
         );
 
-        Message merged = mergeAssistantRun(List.of(first, last));
+        List<Message> messages = new ArrayList<>(List.of(first, last));
+        List<Message> originalMessages = List.copyOf(messages);
 
+        List<Message> normalized = normalizeLoadedHistory(messages);
+
+        assertThat(normalized).hasSize(1);
+        Message merged = normalized.getFirst();
         assertThat(merged.parts()).containsExactlyElementsOf(lastParts);
         assertThat(merged.timestamp()).isEqualTo(lastTimestamp);
         assertThat(merged.meta().activeSkills()).containsExactly("last");
         assertThat(merged.meta().fallbackNotices()).containsExactly("last fallback");
         assertThat(merged.meta().cancelled()).isTrue();
         assertThat(merged.meta().error()).isEqualTo("last error");
-    }
-
-    @Test
-    @DisplayName("An empty assistant run retains the existing empty-assistant fallback")
-    void mergeAssistantRun_whenRunIsNullOrEmpty_returnsEmptyAssistantMessage() {
-        assertThat(mergeAssistantRun(null))
-                .extracting(Message::role, Message::content)
-                .containsExactly(Role.ASSISTANT, "");
-        assertThat(mergeAssistantRun(emptyList()))
-                .extracting(Message::role, Message::content)
-                .containsExactly(Role.ASSISTANT, "");
+        assertThat(messages).containsExactlyElementsOf(originalMessages);
+        assertThat(messages).containsExactly(first, last);
     }
 
     @Test

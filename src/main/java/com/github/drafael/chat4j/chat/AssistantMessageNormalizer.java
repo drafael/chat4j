@@ -54,7 +54,7 @@ final class AssistantMessageNormalizer {
         return normalized;
     }
 
-    static Message mergeAssistantRun(List<Message> assistantRun) {
+    private static Message mergeAssistantRun(List<Message> assistantRun) {
         if (ObjectUtils.isEmpty(assistantRun)) {
             return Message.assistant("");
         }
