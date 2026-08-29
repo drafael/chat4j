@@ -6669,39 +6669,41 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Consecutive assistant artifacts in history are merged into a single assistant message")
-    void loadHistory_whenHistoryContainsConsecutiveAssistantArtifacts_mergesAssistantRun() throws Exception {
+    @DisplayName("Consecutive assistant artifacts install and render as one assistant message")
+    void loadHistory_whenHistoryContainsConsecutiveAssistantArtifacts_installsAndRendersSingleAssistantMessage() throws Exception {
         List<Message> messages = List.of(
                 Message.user("question"),
                 new Message(
                         Role.ASSISTANT,
                         List.of(new TextPart("first answer")),
                         Instant.now(),
-                        new MessageMeta(emptyList(), emptyList(), false, "", "first thinking")
+                        MessageMeta.empty()
                 ),
                 new Message(
                         Role.ASSISTANT,
                         List.of(new TextPart("")),
                         Instant.now(),
-                        new MessageMeta(emptyList(), emptyList(), false, "", "artifact thinking")
+                        MessageMeta.empty()
                 ),
                 new Message(
                         Role.ASSISTANT,
                         List.of(new TextPart("final answer")),
                         Instant.now(),
-                        new MessageMeta(emptyList(), emptyList(), false, "", "final thinking")
+                        MessageMeta.empty()
                 )
         );
 
         runOnEdt(() -> subject.loadHistory(messages));
 
-        List<Message> history = callOnEdt(subject::getHistory);
-        assertThat(history).hasSize(2);
-        Message assistant = history.get(1);
-        assertThat(assistant.content()).isEqualTo("final answer");
-        assertThat(assistant.meta().assistantThinking()).contains("first thinking");
-        assertThat(assistant.meta().assistantThinking()).contains("artifact thinking");
-        assertThat(assistant.meta().assistantThinking()).contains("final thinking");
+        assertThat(callOnEdt(subject::getHistory))
+                .extracting(Message::role)
+                .containsExactly(Role.USER, Role.ASSISTANT);
+        assertThat(callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, MessageBubble.class).stream()
+                    .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                    .toList();
+        })).hasSize(1);
     }
 
     @Test

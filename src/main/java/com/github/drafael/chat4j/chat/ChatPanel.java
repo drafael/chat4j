@@ -119,7 +119,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import javax.swing.*;
@@ -132,6 +131,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import static com.github.drafael.chat4j.chat.AssistantMessageNormalizer.normalizeLoadedHistory;
+import static com.github.drafael.chat4j.chat.AssistantMessageNormalizer.normalizeThinkingText;
 import static com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptReadAloudToken.create;
 import static com.github.drafael.chat4j.chat.render.ReadAloudTextExtractor.extract;
 import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
@@ -172,9 +173,6 @@ public class ChatPanel extends JPanel {
     private static final boolean AGENT_TOOLS_COLLAPSED_BY_DEFAULT = true;
     private static final String TOGETHER_AGENT_ATTACHMENT_NOTICE =
             "Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.";
-    private static final Pattern ANSI_ESCAPE_PATTERN = Pattern.compile("\u001B\\[[;\\d]*[ -/]*[@-~]");
-    private static final Pattern NON_PRINTABLE_PATTERN = Pattern.compile("[\\p{Cntrl}&&[^\\r\\n\\t]]");
-    private static final Pattern UNICODE_FORMAT_PATTERN = Pattern.compile("\\p{Cf}");
     private static final Map<String, Icon> CHAT_MENU_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel messagesPanel;
@@ -6666,99 +6664,6 @@ public class ChatPanel extends JPanel {
 
     private boolean hasVisibleThinkingContent(String text) {
         return StringUtils.isNotBlank(normalizeThinkingText(text));
-    }
-
-    private List<Message> normalizeLoadedHistory(List<Message> messages) {
-        if (ObjectUtils.isEmpty(messages)) {
-            return emptyList();
-        }
-
-        List<Message> normalized = new ArrayList<>();
-        int index = 0;
-        while (index < messages.size()) {
-            Message message = messages.get(index);
-            if (message.role() != Role.ASSISTANT) {
-                normalized.add(message);
-                index++;
-                continue;
-            }
-
-            int cursor = index;
-            List<Message> assistantRun = new ArrayList<>();
-            while (cursor < messages.size() && messages.get(cursor).role() == Role.ASSISTANT) {
-                assistantRun.add(messages.get(cursor));
-                cursor++;
-            }
-
-            normalized.add(mergeAssistantRun(assistantRun));
-            index = cursor;
-        }
-
-        return normalized;
-    }
-
-    private Message mergeAssistantRun(List<Message> assistantRun) {
-        if (ObjectUtils.isEmpty(assistantRun)) {
-            return Message.assistant("");
-        }
-
-        if (assistantRun.size() == 1) {
-            return assistantRun.getFirst();
-        }
-
-        Message primary = assistantRun.stream()
-                .filter(candidate -> StringUtils.isNotBlank(candidate.content()))
-                .reduce((first, second) -> second)
-                .orElse(assistantRun.getLast());
-
-        String mergedThinking = assistantRun.stream()
-                .map(candidate -> normalizeThinkingText(candidate.meta() == null
-                        ? ""
-                        : StringUtils.defaultString(candidate.meta().assistantThinking())))
-                .filter(this::hasVisibleThinkingContent)
-                .collect(joining("\n\n"));
-
-        String mergedWebSearch = normalizeWebSearchActivity(assistantRun.stream()
-                .map(candidate -> candidate.meta() == null
-                        ? ""
-                        : StringUtils.defaultString(candidate.meta().assistantWebSearch()))
-                .filter(StringUtils::isNotBlank)
-                .collect(joining("\n\n")));
-
-        List<AgentToolActivityMeta> mergedAgentToolActivities = assistantRun.stream()
-                .filter(candidate -> candidate.meta() != null)
-                .flatMap(candidate -> candidate.meta().agentToolActivities().stream())
-                .toList();
-
-        MessageMeta meta = primary.meta() == null ? MessageMeta.empty() : primary.meta();
-        List<CitationRef> mergedCitations = meta.citations();
-        MessageMeta mergedMeta = new MessageMeta(
-                meta.activeSkills(),
-                meta.fallbackNotices(),
-                meta.cancelled(),
-                meta.error(),
-                mergedThinking,
-                mergedWebSearch,
-                mergedAgentToolActivities,
-                mergedCitations
-        );
-
-        return new Message(primary.role(), primary.parts(), primary.timestamp(), mergedMeta);
-    }
-
-    private String normalizeThinkingText(String text) {
-        if (text == null) {
-            return "";
-        }
-
-        String withoutAnsi = ANSI_ESCAPE_PATTERN.matcher(text).replaceAll("");
-        String normalizedLineEndings = withoutAnsi
-                .replace("\r\n", "\n")
-                .replace('\r', '\n');
-        String withoutInvisible = normalizedLineEndings.replace('\u00A0', ' ');
-        String withoutFormatting = UNICODE_FORMAT_PATTERN.matcher(withoutInvisible).replaceAll("");
-
-        return NON_PRINTABLE_PATTERN.matcher(withoutFormatting).replaceAll("");
     }
 
     private void removeMessageComponentFromPanel(JComponent component) {
