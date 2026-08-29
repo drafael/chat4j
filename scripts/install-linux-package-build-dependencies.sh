@@ -23,9 +23,8 @@ case "$1" in
             exit 1
         fi
         dnf install -y \
-            alsa-lib findutils freetype glibc gtk3 java-21-openjdk-devel \
-            libX11 libXext libXi libXrender libXtst maven rpm-build \
-            webkit2gtk4.1 zlib
+            alsa-lib findutils freetype glibc gtk3 libX11 libXext libXi \
+            libXrender libXtst maven rpm-build webkit2gtk4.1 zlib
         ;;
     arch)
         if [[ ! -r /etc/os-release ]]; then
@@ -42,10 +41,9 @@ case "$1" in
         pacman -Syu --needed --noconfirm \
             alsa-lib base-devel freetype2 gcc-libs git glibc gtk3 jdk21-openjdk libx11 \
             libxext libxi libxrender libxtst maven webkit2gtk-4.1 zlib
+        if [[ -n "${GITHUB_ENV:-}" && -n "${GITHUB_PATH:-}" ]]; then
+            echo "JAVA_HOME=/usr/lib/jvm/java-21-openjdk" >> "$GITHUB_ENV"
+            echo "/usr/lib/jvm/java-21-openjdk/bin" >> "$GITHUB_PATH"
+        fi
         ;;
 esac
-
-if [[ -n "${GITHUB_ENV:-}" && -n "${GITHUB_PATH:-}" ]]; then
-    echo "JAVA_HOME=/usr/lib/jvm/java-21-openjdk" >> "$GITHUB_ENV"
-    echo "/usr/lib/jvm/java-21-openjdk/bin" >> "$GITHUB_PATH"
-fi

@@ -36,6 +36,15 @@ def container_image(job):
     return match.group(1) if match is not None else None
 
 
+def shell_case(script, case_name, source):
+    match = re.search(
+        rf"(?ms)^    {re.escape(case_name)}\)\n(.*?)^        ;;\n",
+        script,
+    )
+    require(match is not None, f"{source} must define the {case_name} case")
+    return match.group(1) if match is not None else ""
+
+
 def job_needs(job):
     match = re.search(r"(?ms)^    needs:\n((?:      - [^\n]+\n)+)", job)
     return re.findall(r"(?m)^      - (.+)$", match.group(1)) if match is not None else []
@@ -129,18 +138,34 @@ for needle in (
 ):
     require_text(verifier, needle, "scripts/verify-linux-package.sh")
 
-installer = (root / "scripts/install-linux-package-build-dependencies.sh").read_text()
+installer_source = "scripts/install-linux-package-build-dependencies.sh"
+installer = (root / installer_source).read_text()
+rpm_installer = shell_case(installer, "rpm", installer_source)
+arch_installer = shell_case(installer, "arch", installer_source)
 arch_dependencies = set(re.findall(r"'([^']+)'", re.search(
     r"(?ms)^depends=\(\n(.*?)^\)", arch_recipe
 ).group(1)))
 for dependency in arch_dependencies:
-    require(re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(dependency)}(?![A-Za-z0-9_.-])", installer) is not None,
-            f"dependency installer must install declared Arch dependency {dependency}")
-require_text(installer, "pacman -Syu --needed --noconfirm", "dependency installer")
-require(re.search(r"(?<![A-Za-z0-9_.-])base-devel(?![A-Za-z0-9_.-])", installer) is not None,
-        "dependency installer must install the Arch base-devel toolchain")
-require_text(installer, "java-21-openjdk-devel", "dependency installer")
-require_text(installer, "rpm-build", "dependency installer")
+    require(re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(dependency)}(?![A-Za-z0-9_.-])", arch_installer) is not None,
+            f"dependency installer Arch case must install declared dependency {dependency}")
+require_text(arch_installer, "pacman -Syu --needed --noconfirm", "dependency installer Arch case")
+require(re.search(r"(?<![A-Za-z0-9_.-])base-devel(?![A-Za-z0-9_.-])", arch_installer) is not None,
+        "dependency installer Arch case must install the base-devel toolchain")
+require_text(arch_installer, "jdk21-openjdk", "dependency installer Arch case")
+require_text(rpm_installer, "rpm-build", "dependency installer RPM case")
+require("java-21-openjdk-devel" not in rpm_installer,
+        "dependency installer RPM case must not request unavailable Fedora 44 java-21-openjdk-devel")
+java_home_export = 'echo "JAVA_HOME=/usr/lib/jvm/java-21-openjdk" >> "$GITHUB_ENV"'
+java_path_export = 'echo "/usr/lib/jvm/java-21-openjdk/bin" >> "$GITHUB_PATH"'
+require_text(arch_installer, java_home_export, "dependency installer Arch case")
+require_text(arch_installer, java_path_export, "dependency installer Arch case")
+require(installer.count(java_home_export) == 1 and installer.count(java_path_export) == 1,
+        "dependency installer must export the distro JDK environment only for Arch")
+for environment_token in ("GITHUB_ENV", "GITHUB_PATH", "/usr/lib/jvm/java-21-openjdk"):
+    require(installer.count(environment_token) == arch_installer.count(environment_token),
+            f"dependency installer must restrict {environment_token} handling to the Arch case")
+require("GITHUB_ENV" not in rpm_installer and "GITHUB_PATH" not in rpm_installer,
+        "dependency installer RPM case must preserve the setup-java JAVA_HOME and PATH")
 
 release_path = root / ".github/workflows/release.yml"
 release_workflow = release_path.read_text()
@@ -155,8 +180,19 @@ require_text(native_job, "-Dchat4j.jpackage.rpm.skip=true", "release native job"
 require_text(native_job, "target/dist/*.deb", "release native job")
 require("target/dist/*.rpm" not in native_job, "release native job must not build or upload RPMs on Ubuntu")
 
+setup_java_21 = """uses: actions/setup-java@v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven"""
+rpm_dependency_command = "scripts/install-linux-package-build-dependencies.sh rpm"
+
 require(container_image(rpm_job) == "fedora:44", "release RPM job must use the supported Fedora 44 image")
-require_text(rpm_job, "scripts/install-linux-package-build-dependencies.sh rpm", "release RPM job")
+require_text(rpm_job, setup_java_21, "release RPM job")
+require_text(rpm_job, rpm_dependency_command, "release RPM job")
+if setup_java_21 in rpm_job and rpm_dependency_command in rpm_job:
+    require(rpm_job.index(setup_java_21) < rpm_job.index(rpm_dependency_command),
+            "release RPM job must set up Temurin JDK 21 before installing Fedora dependencies")
 require_text(rpm_job, "scripts/build-rpm-package.sh", "release RPM job")
 require_text(rpm_job, "target/dist/*.rpm", "release RPM job")
 require_text(rpm_job, "if-no-files-found: error", "release RPM job")
@@ -165,6 +201,8 @@ release_arch_image = container_image(arch_job)
 require(re.fullmatch(r"archlinux:base-devel-[0-9]{8}\.[0-9]+\.[0-9]+", release_arch_image or "") is not None,
         "release Arch job must use an official dated base-devel image")
 require_text(arch_job, "scripts/install-linux-package-build-dependencies.sh arch", "release Arch job")
+require("actions/setup-java@" not in arch_job,
+        "release Arch job must use the distro JDK rather than setup-java")
 require_text(arch_job, "runuser -u builder", "release Arch job")
 require_text(arch_job, "scripts/build-arch-package.sh", "release Arch job")
 require_text(arch_job, "target/arch-package-build/*.pkg.tar.zst", "release Arch job")
@@ -193,10 +231,17 @@ smoke_rpm_job = workflow_job(smoke_workflow, "rpm", str(smoke_path.relative_to(r
 smoke_arch_job = workflow_job(smoke_workflow, "arch", str(smoke_path.relative_to(root)))
 require(container_image(smoke_rpm_job) == container_image(rpm_job),
         "release and smoke RPM jobs must use the same Fedora image")
+require_text(smoke_rpm_job, setup_java_21, "smoke RPM job")
+require_text(smoke_rpm_job, rpm_dependency_command, "smoke RPM job")
+if setup_java_21 in smoke_rpm_job and rpm_dependency_command in smoke_rpm_job:
+    require(smoke_rpm_job.index(setup_java_21) < smoke_rpm_job.index(rpm_dependency_command),
+            "smoke RPM job must set up Temurin JDK 21 before installing Fedora dependencies")
 require(container_image(smoke_arch_job) == release_arch_image,
         "release and smoke Arch jobs must use the same dated image")
+require("actions/setup-java@" not in smoke_arch_job,
+        "smoke Arch job must use the distro JDK rather than setup-java")
 for command, release_job, smoke_job, description in (
-    ("scripts/install-linux-package-build-dependencies.sh rpm", rpm_job, smoke_rpm_job, "RPM dependency command"),
+    (rpm_dependency_command, rpm_job, smoke_rpm_job, "RPM dependency command"),
     ("scripts/build-rpm-package.sh", rpm_job, smoke_rpm_job, "RPM build command"),
     ("scripts/install-linux-package-build-dependencies.sh arch", arch_job, smoke_arch_job, "Arch dependency command"),
     ("scripts/build-arch-package.sh", arch_job, smoke_arch_job, "Arch build command"),

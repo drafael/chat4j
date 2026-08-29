@@ -195,6 +195,13 @@ jobs:
         with:
           ref: ${{ needs.metadata.outputs.tag }}
 
+      - name: Set up Java
+        uses: actions/setup-java@v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Install Fedora RPM build dependencies
         run: scripts/install-linux-package-build-dependencies.sh rpm
 
