@@ -132,11 +132,35 @@ for needle in (
     "rpm -qp --requires",
     "RPM must declare meaningful runtime dependencies",
     'require_line "$package_files" "/opt/chat4j/bin/chat4j"',
+    'require_line "$package_files" "/opt/chat4j/lib/chat4j-chat4j.desktop"',
+    'require_line "$package_files" "/opt/chat4j/lib/chat4j.png"',
+    'install_scripts="$(rpm -qp --scripts "$package_path")"',
+    'grep -F "xdg-desktop-menu install"',
     'package_info="$(bsdtar -xOf "$package_path" .PKGINFO)"',
     '"Exec=/opt/chat4j/bin/chat4j"',
     '"$(readlink "$command_link")" != "/opt/chat4j/bin/chat4j"',
 ):
     require_text(verifier, needle, "scripts/verify-linux-package.sh")
+
+smoke_installer_path = root / "scripts/smoke-install-linux-package.sh"
+require(smoke_installer_path.is_file(), "scripts/smoke-install-linux-package.sh must exist")
+smoke_installer = smoke_installer_path.read_text() if smoke_installer_path.is_file() else ""
+for needle in (
+    'dnf install -y "$package_path"',
+    'pacman -U --noconfirm "$package_path"',
+    "rpm -q --queryformat '%{NAME}' chat4j",
+    'installed_identity="$(pacman -Q chat4j)"',
+    'desktop_file="/opt/chat4j/lib/chat4j-chat4j.desktop"',
+    'icon="/opt/chat4j/lib/chat4j.png"',
+    'desktop_file="/usr/share/applications/chat4j.desktop"',
+    'icon="/usr/share/icons/hicolor/512x512/apps/chat4j.png"',
+    'HOME="$smoke_home"',
+    'timeout --kill-after=5s 15s xvfb-run -a "$launcher"',
+    '"$launch_status" -eq 124',
+    '"$launch_status" -eq 137 && "$launch_elapsed_seconds" -ge 15',
+    'elif [[ "$launch_status" -ne 0 ]]',
+):
+    require_text(smoke_installer, needle, "scripts/smoke-install-linux-package.sh")
 
 installer_source = "scripts/install-linux-package-build-dependencies.sh"
 installer = (root / installer_source).read_text()
@@ -153,6 +177,11 @@ require(re.search(r"(?<![A-Za-z0-9_.-])base-devel(?![A-Za-z0-9_.-])", arch_insta
         "dependency installer Arch case must install the base-devel toolchain")
 require_text(arch_installer, "jdk21-openjdk", "dependency installer Arch case")
 require_text(rpm_installer, "rpm-build", "dependency installer RPM case")
+require_text(rpm_installer, "xdg-utils", "dependency installer RPM case")
+require_text(rpm_installer, "xorg-x11-server-Xvfb", "dependency installer RPM case")
+require_text(rpm_installer, "xorg-x11-xauth", "dependency installer RPM case")
+require_text(arch_installer, "xorg-server-xvfb", "dependency installer Arch case")
+require_text(arch_installer, "xorg-xauth", "dependency installer Arch case")
 require("java-21-openjdk-devel" not in rpm_installer,
         "dependency installer RPM case must not request unavailable Fedora 44 java-21-openjdk-devel")
 java_home_export = 'echo "JAVA_HOME=/usr/lib/jvm/java-21-openjdk" >> "$GITHUB_ENV"'
@@ -221,6 +250,7 @@ smoke_workflow = smoke_path.read_text() if smoke_path.is_file() else ""
 smoke_header = smoke_workflow.split("permissions:", 1)[0]
 require(re.search(r"(?m)^  pull_request:\n    paths:\n", smoke_header) is not None,
         "Linux package smoke workflow must use pull-request path filters")
+require_text(smoke_header, "scripts/smoke-install-linux-package.sh", "Linux package smoke path filters")
 require(re.search(r"(?m)^  push:", smoke_header) is None,
         "Linux package smoke workflow must not publish or run on pushes")
 require_text(smoke_workflow, "permissions:\n  contents: read", "Linux package smoke workflow")
@@ -249,6 +279,16 @@ for command, release_job, smoke_job, description in (
     require(command in release_job and command in smoke_job,
             f"release and smoke jobs must share the {description}")
 require_text(smoke_arch_job, "runuser -u builder", "smoke Arch job")
+require_text(
+    smoke_rpm_job,
+    'scripts/smoke-install-linux-package.sh rpm target/dist/*.rpm',
+    "smoke RPM job",
+)
+require_text(
+    smoke_arch_job,
+    'scripts/smoke-install-linux-package.sh arch target/arch-package-build/*.pkg.tar.zst',
+    "smoke Arch job",
+)
 
 readme = (root / "README.md").read_text()
 require_text(readme, "sudo scripts/install-linux-package-build-dependencies.sh arch", "README.md")

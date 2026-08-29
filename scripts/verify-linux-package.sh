@@ -50,12 +50,13 @@ case "$package_type" in
 
         package_files="$(rpm -qpl "$package_path")"
         require_line "$package_files" "/opt/chat4j/bin/chat4j" "application launcher"
-        if ! grep -Eq '^/usr/share/applications/.+\.desktop$' <<< "$package_files"; then
-            echo "RPM is missing its desktop launcher metadata." >&2
-            exit 1
-        fi
-        if ! grep -Eq '^/usr/share/icons/.+/apps/.+\.png$' <<< "$package_files"; then
-            echo "RPM is missing its application icon." >&2
+        require_line "$package_files" "/opt/chat4j/lib/chat4j-chat4j.desktop" "packaged desktop resource"
+        require_line "$package_files" "/opt/chat4j/lib/chat4j.png" "packaged application icon"
+
+        install_scripts="$(rpm -qp --scripts "$package_path")"
+        if ! grep -F "xdg-desktop-menu install" <<< "$install_scripts" \
+            | grep -Fq "/opt/chat4j/lib/chat4j-chat4j.desktop"; then
+            echo "RPM install scripts do not register the packaged desktop resource with xdg-desktop-menu." >&2
             exit 1
         fi
 
