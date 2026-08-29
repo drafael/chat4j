@@ -15,7 +15,6 @@ import com.github.drafael.chat4j.chat.composer.EditComposerPanel;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
 import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
 import com.github.drafael.chat4j.chat.composer.InputBar;
-import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefBrowserView;
@@ -55,7 +54,6 @@ import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
-import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
@@ -92,7 +90,6 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
-import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -110,7 +107,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -123,7 +119,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -180,8 +175,6 @@ public class ChatPanel extends JPanel {
     private static final Pattern ANSI_ESCAPE_PATTERN = Pattern.compile("\u001B\\[[;\\d]*[ -/]*[@-~]");
     private static final Pattern NON_PRINTABLE_PATTERN = Pattern.compile("[\\p{Cntrl}&&[^\\r\\n\\t]]");
     private static final Pattern UNICODE_FORMAT_PATTERN = Pattern.compile("\\p{Cf}");
-    private static final Pattern SOURCE_URL_PATTERN = Pattern.compile("(?:\\[[^]]+])?\\(<(https?://[^>\\s]+)>\\)|<(https?://[^>\\s]+)>|(?:\\[[^]]+])?\\((https?://(?:[^\\s()<>]|\\([^\\s()<>]*\\))+)\\)|(https?://(?:[^\\s()<>]|\\([^\\s()<>]*\\))+)");
-    private static final Pattern SOURCE_REFERENCE_LINE_PATTERN = Pattern.compile("(?m)^\\s*(?:[-*]\\s*)?\\[\\d+]\\s*(?:\\([^)]*https?://[^)]*\\)|.*https?://\\S+)");
     private static final Map<String, Icon> CHAT_MENU_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel messagesPanel;
@@ -1945,7 +1938,7 @@ public class ChatPanel extends JPanel {
             } else {
                 session.webSearchSources.values().forEach(source -> activity
                         .append("- [")
-                        .append(escapeMarkdownLinkLabel(source.title()))
+                        .append(AssistantSourceFormatter.escapeMarkdownLinkLabel(source.title()))
                         .append("](<")
                         .append(source.url())
                         .append(">)\n"));
@@ -1959,10 +1952,6 @@ public class ChatPanel extends JPanel {
             session.webSearchActivity.setLength(0);
             session.webSearchActivity.append(StringUtils.defaultString(activity));
         }
-    }
-
-    private String escapeMarkdownLinkLabel(String value) {
-        return StringUtils.defaultString(value).replace("[", "\\[").replace("]", "\\]");
     }
 
     private void showWebSearchActivity(StreamingSession session, String webSearchActivity) {
@@ -6496,9 +6485,9 @@ public class ChatPanel extends JPanel {
             consultedSourceMode = session.consultedSourceMode;
         }
         if (!consultedSourceMode) {
-            assistantText = appendCitationSourcesIfNeeded(assistantText, citations);
-            assistantWebSearch = mergeAssistantWebSearchWithAnswerSources(
-                    sendJob,
+            assistantText = AssistantSourceFormatter.appendCitationSourcesIfNeeded(assistantText, citations);
+            assistantWebSearch = AssistantSourceFormatter.mergeWebSearchActivityWithAnswerSources(
+                    sendJob != null && sendJob.webSearchEnabled,
                     assistantText,
                     assistantWebSearch,
                     citations
@@ -6577,170 +6566,8 @@ public class ChatPanel extends JPanel {
         nextMessageOrdinal = preparedResponse.entry().ordinal() + 1;
     }
 
-    private String mergeAssistantWebSearchWithAnswerSources(
-            SendJob sendJob,
-            String assistantText,
-            String existingActivity,
-            List<CitationRef> citations
-    ) {
-        if (sendJob == null || !sendJob.webSearchEnabled) {
-            return existingActivity;
-        }
-
-        String sourceActivity = citationSourceLines(citations);
-        if (StringUtils.isBlank(sourceActivity)) {
-            sourceActivity = extractWebSearchSourcesFromAssistantText(assistantText);
-        }
-        if (StringUtils.isBlank(sourceActivity)) {
-            return existingActivity;
-        }
-
-        return "%s\n\n**Sources**\n%s".formatted(
-                StringUtils.defaultString(existingActivity).trim(),
-                sourceActivity
-        ).trim();
-    }
-
-    private String appendCitationSourcesIfNeeded(String assistantText, List<CitationRef> citations) {
-        String text = StringUtils.defaultString(assistantText);
-        if (citations == null || citations.isEmpty()
-                || SOURCE_REFERENCE_LINE_PATTERN.matcher(text).find()
-                || hasSourceSectionWithUrls(text)) {
-            return text;
-        }
-
-        String sources = citationSourceLines(citations);
-        if (StringUtils.isBlank(sources)) {
-            return text;
-        }
-
-        String answer = text.stripTrailing();
-        return StringUtils.isBlank(answer)
-                ? "Sources:\n%s".formatted(sources)
-                : "%s\n\nSources:\n%s".formatted(answer, sources);
-    }
-
-    private boolean hasSourceSectionWithUrls(String text) {
-        boolean inSources = false;
-        for (String line : text.split("\\R")) {
-            String normalizedLine = normalizeHeadingLine(line);
-            if (Strings.CI.equals(normalizedLine, "sources")) {
-                inSources = true;
-                continue;
-            }
-            if (inSources && isMarkdownHeadingLine(line)) {
-                inSources = false;
-            }
-            if (inSources && SOURCE_URL_PATTERN.matcher(line).find()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isMarkdownHeadingLine(String line) {
-        String trimmed = StringUtils.trimToEmpty(line);
-        return trimmed.startsWith("#") || trimmed.matches("\\*\\*.+\\*\\*:?");
-    }
-
-    private String normalizeHeadingLine(String line) {
-        String heading = StringUtils.trimToEmpty(line).replaceFirst("^#+\\s*", "");
-        heading = Strings.CS.removeEnd(heading, ":").trim();
-        heading = Strings.CS.removeEnd(Strings.CS.removeStart(heading, "**"), "**").trim();
-        heading = Strings.CS.removeEnd(heading, ":").trim();
-        return heading;
-    }
-
-    private String citationSourceLines(List<CitationRef> citations) {
-        if (citations == null || citations.isEmpty()) {
-            return "";
-        }
-
-        return citations.stream()
-                .filter(citation -> citation != null && citation.number() > 0)
-                .filter(citation -> citation.kind() == CitationKind.WEB)
-                .filter(citation -> ExternalLinkSupport.isAllowedHttpLink(citation.url()))
-                .collect(toMap(
-                        CitationRef::number,
-                        this::citationSourceLine,
-                        (existing, replacement) -> existing,
-                        TreeMap::new
-                ))
-                .values()
-                .stream()
-                .collect(joining("\n"));
-    }
-
-    private String citationSourceLine(CitationRef citation) {
-        return "[%d] [%s](%s)".formatted(
-                citation.number(),
-                escapeMarkdownLinkLabel(citationSourceLabel(citation)),
-                markdownLinkDestination(citation.url())
-        );
-    }
-
-    private String markdownLinkDestination(String url) {
-        return "<%s>".formatted(StringUtils.defaultString(url).replace(">", "%3E"));
-    }
-
-    private String citationSourceLabel(CitationRef citation) {
-        String title = StringUtils.trimToEmpty(citation.displayTitle()).replaceAll("\\s+", " ");
-        if (StringUtils.isNotBlank(title) && !Strings.CS.equals(title, citation.url())) {
-            return title;
-        }
-        return sourceDomain(citation.url());
-    }
-
-    private String sourceDomain(String url) {
-        try {
-            String host = URI.create(url).getHost();
-            return StringUtils.defaultIfBlank(Strings.CS.removeStart(host, "www."), url);
-        } catch (Exception e) {
-            return url;
-        }
-    }
-
     private String normalizeWebSearchActivity(String activity) {
         return WebSearchActivityNormalizer.normalize(activity);
-    }
-
-    private String extractWebSearchSourcesFromAssistantText(String assistantText) {
-        if (StringUtils.isBlank(assistantText)) {
-            return "";
-        }
-
-        List<String> sourceItems = Arrays.stream(assistantText.split("\\R"))
-                .map(SOURCE_URL_PATTERN::matcher)
-                .filter(Matcher::find)
-                .map(this::matchedSourceItem)
-                .filter(StringUtils::isNotBlank)
-                .distinct()
-                .limit(10)
-                .toList();
-        if (sourceItems.isEmpty()) {
-            return "";
-        }
-
-        StringBuilder sources = new StringBuilder();
-        sourceItems.forEach(item -> sources.append("- ").append(item).append("\n"));
-        return sources.toString().trim();
-    }
-
-    private String matchedSourceItem(Matcher matcher) {
-        String match = StringUtils.trimToEmpty(matcher.group());
-        return Strings.CI.startsWith(match, "http://") || Strings.CI.startsWith(match, "https://")
-                ? markdownLinkDestination(matchedSourceUrl(matcher))
-                : match;
-    }
-
-    private String matchedSourceUrl(Matcher matcher) {
-        for (int i = 1; i <= matcher.groupCount(); i++) {
-            String value = matcher.group(i);
-            if (StringUtils.isNotBlank(value)) {
-                return value;
-            }
-        }
-        return "";
     }
 
     private void removeCurrentWebSearchBubbleIfBlank() {
