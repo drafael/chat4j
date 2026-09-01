@@ -166,6 +166,7 @@ public class ChatPanel extends JPanel {
     private static final String MESSAGE_ACTION_BAR_PROPERTY = "chat4j.messageActionBar";
     private static final String BUBBLE_ACTION_BAR_PROPERTY = "chat4j.bubbleActionBar";
     private static final String WEBVIEW_POINTER_DOWN_ACTION = "webview-pointer-down";
+    private static final String WEBVIEW_CONTENT_CLICK_ACTION = "webview-content-click";
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
@@ -4486,6 +4487,10 @@ public class ChatPanel extends JPanel {
             }
             if (Strings.CS.equals(action, WEBVIEW_POINTER_DOWN_ACTION)) {
                 hideModelPopup();
+                return;
+            }
+            if (Strings.CS.equals(action, WEBVIEW_CONTENT_CLICK_ACTION)) {
+                inputBar.requestInputFocus();
                 return;
             }
             if (Strings.CS.equalsAny(action, "copy-selected", "copy-text")) {

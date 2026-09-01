@@ -387,6 +387,55 @@ class TranscriptBrowserAssetsTest {
     }
 
     @Test
+    @DisplayName("Mouse clicks without a text selection return typing focus to the composer")
+    void transcriptActionsScript_whenWebViewContentIsClicked_dispatchesComposerFocusAction() {
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            context.eval("js", """
+                    var documentListeners = {};
+                    var bridgePayloads = [];
+                    var selectionText = '';
+                    var window = {
+                        addEventListener: function () {},
+                        getSelection: function () {
+                            return { toString: function () { return selectionText; } };
+                        },
+                        chat4jTranscriptAction: function (payload) {
+                            bridgePayloads.push(payload);
+                        }
+                    };
+                    var document = {
+                        addEventListener: function (type, listener) {
+                            documentListeners[type] = listener;
+                        },
+                        getElementById: function () { return null; }
+                    };
+                    function click(detail) {
+                        documentListeners.click({
+                            detail: detail,
+                            target: null,
+                            preventDefault: function () {},
+                            stopPropagation: function () {}
+                        });
+                    }
+                    """);
+            context.eval("js", TranscriptBrowserAssets.transcriptActionsScript());
+
+            context.eval("js", "click(1);");
+            context.eval("js", "selectionText = 'selected transcript text'; click(1);");
+            context.eval("js", "selectionText = ''; click(0);");
+            String rawPayload = context.eval("js", "bridgePayloads[0]").asString();
+            TranscriptCallbackPayloads.TranscriptAction action = TranscriptCallbackPayloads.transcriptAction(rawPayload);
+
+            assertThat(context.eval("js", "bridgePayloads.length").asInt()).isOne();
+            assertThat(action).isEqualTo(new TranscriptCallbackPayloads.TranscriptAction(
+                    "webview-content-click",
+                    -1,
+                    ""
+            ));
+        }
+    }
+
+    @Test
     @DisplayName("Activity copy dispatches rendered text without toggling the details element")
     void transcriptActionsScript_whenActivityCopyClicked_dispatchesTextAndCancelsDefaultInteraction() {
         try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {

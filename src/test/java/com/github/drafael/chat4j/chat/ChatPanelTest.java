@@ -4694,6 +4694,20 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("WebView content clicks return typing focus to the composer")
+    void handleWebTranscriptAction_whenWebViewContentClicked_requestsInputFocus() throws Exception {
+        var focusHandoffs = new AtomicInteger();
+        runOnEdt(() -> subject.getInputBar().setNativeFocusRelease(focusHandoffs::incrementAndGet));
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "webview-content-click", -1, ""));
+        flushEdt();
+
+        assertThat(focusHandoffs).hasValue(1);
+    }
+
+    @Test
     @DisplayName("Browser transcript PDF action invokes the whole-conversation export callback")
     void handleWebTranscriptAction_whenPdfExportRequested_invokesExportCallback() throws Exception {
         var requested = new AtomicInteger();

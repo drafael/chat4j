@@ -31,10 +31,13 @@
       normalizedMessageIndex = -1;
     }
     var hasPayload = normalizedMessageIndex >= 0 || payloadText.length > 0;
+    var payloadFreeAction =
+      normalizedAction === "webview-pointer-down" ||
+      normalizedAction === "webview-content-click";
     if (
       window.chat4jTranscriptAction &&
       normalizedAction.length > 0 &&
-      (hasPayload || normalizedAction === "webview-pointer-down")
+      (hasPayload || payloadFreeAction)
     ) {
       window.chat4jTranscriptAction(
         JSON.stringify({
@@ -527,6 +530,9 @@
     "click",
     function (event) {
       hideSourcePreview();
+      if (event.detail > 0 && selectedText().length === 0) {
+        dispatchTranscriptAction("webview-content-click", -1, "");
+      }
       var attachmentButton = closest(
         event.target,
         '[data-action="open-attachment"][data-attachment-path]',
