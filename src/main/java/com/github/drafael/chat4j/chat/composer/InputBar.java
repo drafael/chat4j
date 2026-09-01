@@ -44,8 +44,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import javax.swing.*;
@@ -1210,18 +1212,27 @@ public class InputBar extends JPanel {
     }
 
     public void requestInputFocus() {
-        Runnable request = () -> {
-            nativeFocusRelease.run();
-            // AWT can still report this text area as focused while WKWebView remains AppKit's first responder.
-            if (SystemInfo.isMacOS) {
-                MacAwtFocusBridge.restoreAwtFirstResponder();
-            }
+        Runnable focusTextArea = () -> {
             if (textArea.isShowing()) {
                 textArea.requestFocusInWindow();
                 return;
             }
 
             SwingUtilities.invokeLater(textArea::requestFocusInWindow);
+        };
+        Runnable request = () -> {
+            nativeFocusRelease.run();
+            // AWT can still report this text area as focused while WKWebView remains AppKit's first responder.
+            // Wait for AppKit to release it before asking Swing for focus, or Space still scrolls the transcript.
+            if (SystemInfo.isMacOS) {
+                try {
+                    if (MacAwtFocusBridge.restoreAwtFirstResponder(focusTextArea)) {
+                        return;
+                    }
+                } catch (RuntimeException | LinkageError ignored) {
+                }
+            }
+            focusTextArea.run();
         };
 
         if (SwingUtilities.isEventDispatchThread()) {
@@ -2784,6 +2795,7 @@ public class InputBar extends JPanel {
         private static final Function GET_CLASS = OBJECTIVE_C_RUNTIME.getFunction("objc_getClass");
         private static final Function REGISTER_SELECTOR = OBJECTIVE_C_RUNTIME.getFunction("sel_registerName");
         private static final Function SEND_MESSAGE = OBJECTIVE_C_RUNTIME.getFunction("objc_msgSend");
+        private static final Queue<Runnable> COMPLETIONS = new ConcurrentLinkedQueue<>();
         // Window/view lookup and mutation are AppKit-main-thread confined.
         private static final DispatchCallback RESTORE_AWT_FIRST_RESPONDER = ignored -> {
             try {
@@ -2795,16 +2807,25 @@ public class InputBar extends JPanel {
                     SEND_MESSAGE.invokeInt(new Object[]{window, selector("makeFirstResponder:"), contentView});
                 }
             } catch (RuntimeException | LinkageError ignoredError) {
+            } finally {
+                Runnable completion = COMPLETIONS.poll();
+                if (completion != null) {
+                    SwingUtilities.invokeLater(completion);
+                }
             }
         };
 
         private MacAwtFocusBridge() {
         }
 
-        private static void restoreAwtFirstResponder() {
+        private static boolean restoreAwtFirstResponder(Runnable completion) {
+            COMPLETIONS.add(completion);
             try {
                 DISPATCH_ASYNC.invokeVoid(new Object[]{MAIN_QUEUE, null, RESTORE_AWT_FIRST_RESPONDER});
+                return true;
             } catch (RuntimeException | LinkageError ignored) {
+                COMPLETIONS.remove(completion);
+                return false;
             }
         }
 
