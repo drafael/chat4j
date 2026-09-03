@@ -21,7 +21,9 @@ public record CitationRef(
         Long startBlock,
         Long endBlock,
         String source,
-        Long searchResultIndex
+        Long searchResultIndex,
+        Long responseStartIndex,
+        Long responseEndIndex
 ) {
 
     public CitationRef {

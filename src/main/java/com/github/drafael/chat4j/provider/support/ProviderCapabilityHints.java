@@ -329,6 +329,10 @@ final class ProviderCapabilityHints {
                 || PerplexityModelIds.isNamespacedSonarModel(model);
     }
 
+    static boolean supportsOpenRouterServerWebSearch(String model) {
+        return Strings.CI.startsWith(StringUtils.trimToEmpty(model), "openai/");
+    }
+
     static boolean supportsGroqNativeWebSearch(String model) {
         return Strings.CS.equalsAny(model, "compound", "compound-mini", "groq/compound", "groq/compound-mini");
     }

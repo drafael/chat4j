@@ -160,7 +160,9 @@ final class OpenAiCompatibleCitationMapper {
         UrlCitationMapper.fromUrl(
                 firstString(map, "title", "name"),
                 stringValue(map.get("url")),
-                firstString(map, "cited_text", "citedText", "snippet", "content", "text")
+                firstString(map, "cited_text", "citedText", "snippet", "content", "text"),
+                firstLong(map, "start_index", "startIndex"),
+                firstLong(map, "end_index", "endIndex")
         ).ifPresent(citations::add);
     }
 
@@ -172,6 +174,16 @@ final class OpenAiCompatibleCitationMapper {
             }
         }
         return "";
+    }
+
+    private static Long firstLong(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value instanceof Number number) {
+                return number.longValue();
+            }
+        }
+        return null;
     }
 
     private static String stringValue(Object value) {

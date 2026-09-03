@@ -273,7 +273,7 @@ public final class ProviderCapabilityResolver {
         }
         if ((GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && supportsGroqNativeWebSearch(model))
                 || (OPENROUTER_PROVIDER_HINTS.contains(provider) && supportsOpenRouterNativeWebSearch(model))
-                || (OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && isOpenAiSearchPreviewModel(model))) {
+                || (OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && isOpenAiRequiredSearchModel(model))) {
             return NativeWebSearchOutcome.REQUIRED;
         }
 
@@ -296,6 +296,8 @@ public final class ProviderCapabilityResolver {
                 && containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS))
                 || (XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
                 && supportsXaiNativeWebSearch(model))
+                || (OPENROUTER_PROVIDER_HINTS.contains(provider)
+                && supportsOpenRouterServerWebSearch(model))
                 || (GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
                 && supportsGoogleNativeWebSearchModel(model))) {
             return NativeWebSearchOutcome.OPTIONAL;
@@ -365,6 +367,11 @@ public final class ProviderCapabilityResolver {
 
     public static boolean isOpenAiSearchPreviewModel(String modelId) {
         return normalize(modelId).matches("gpt-4o(?:-mini)?-search-preview(?:-\\d{4}-\\d{2}-\\d{2})?");
+    }
+
+    public static boolean isOpenAiRequiredSearchModel(String modelId) {
+        return Strings.CS.equals(normalize(modelId), "gpt-5-search-api")
+                || isOpenAiSearchPreviewModel(modelId);
     }
 
     public static boolean supportsFileInput(ProviderCapabilities capabilities) {

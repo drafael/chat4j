@@ -7,12 +7,18 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 
+import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toMap;
 
@@ -26,7 +32,6 @@ final class AssistantSourceFormatter {
 
     static String mergeWebSearchActivityWithAnswerSources(
             boolean webSearchEnabled,
-            String assistantText,
             String existingActivity,
             List<CitationRef> citations
     ) {
@@ -35,9 +40,6 @@ final class AssistantSourceFormatter {
         }
 
         String sourceActivity = citationSourceLines(citations);
-        if (StringUtils.isBlank(sourceActivity)) {
-            sourceActivity = extractWebSearchSourcesFromAssistantText(assistantText);
-        }
         if (StringUtils.isBlank(sourceActivity)) {
             return existingActivity;
         }
@@ -67,8 +69,161 @@ final class AssistantSourceFormatter {
                 : "%s\n\nSources:\n%s".formatted(answer, sources);
     }
 
+    static List<CitationRef> citationsValidForPartialResponse(String assistantText, List<CitationRef> citations) {
+        if (citations == null || citations.isEmpty()) {
+            return emptyList();
+        }
+
+        String text = StringUtils.defaultString(assistantText);
+        return citations.stream()
+                .filter(citation -> citation != null)
+                .filter(citation -> {
+                    boolean hasStart = citation.responseStartIndex() != null;
+                    boolean hasEnd = citation.responseEndIndex() != null;
+                    return !hasStart && !hasEnd || hasStart && hasEnd && toResponseSpan(citation, text).isPresent();
+                })
+                .toList();
+    }
+
+    static String normalizeResponseCitationMarkers(String assistantText, List<CitationRef> citations) {
+        String text = StringUtils.defaultString(assistantText);
+        if (text.isEmpty() || citations == null || citations.isEmpty()) {
+            return text;
+        }
+
+        Map<ResponseSpan, TreeSet<Integer>> numbersBySpan = new TreeMap<>(Comparator
+                .comparingInt(ResponseSpan::start)
+                .thenComparingInt(ResponseSpan::end));
+        citations.stream()
+                .filter(AssistantSourceFormatter::hasValidResponseSpanMetadata)
+                .filter(citation -> ExternalLinkSupport.isAllowedHttpLink(citation.url()))
+                .map(citation -> toResponseSpan(citation, text))
+                .flatMap(Optional::stream)
+                .forEach(positioned -> numbersBySpan
+                        .computeIfAbsent(positioned.span(), ignored -> new TreeSet<>())
+                        .add(positioned.number()));
+        if (numbersBySpan.isEmpty() || containsAllInlineMarkers(text, numbersBySpan.values())) {
+            return text;
+        }
+
+        Set<ResponseSpan> conflictingSpans = findConflictingSpans(new ArrayList<>(numbersBySpan.keySet()));
+        List<ResponseReplacement> replacements = numbersBySpan.entrySet().stream()
+                .filter(entry -> !conflictingSpans.contains(entry.getKey()))
+                .map(entry -> new ResponseReplacement(entry.getKey(), entry.getValue()))
+                .toList();
+        List<ResponseReplacement> mergedReplacements = mergeAdjacentReplacements(replacements);
+
+        StringBuilder normalized = new StringBuilder(text);
+        for (int i = mergedReplacements.size() - 1; i >= 0; i--) {
+            ResponseReplacement replacement = mergedReplacements.get(i);
+            String markers = replacement.numbers().stream()
+                    .map(number -> "[%d]".formatted(number))
+                    .collect(joining());
+            String prefix = replacement.span().start() > 0
+                    && !Character.isWhitespace(text.charAt(replacement.span().start() - 1))
+                    ? " "
+                    : "";
+            normalized.replace(replacement.span().start(), replacement.span().end(), prefix + markers);
+        }
+        return normalized.toString();
+    }
+
     static String escapeMarkdownLinkLabel(String value) {
         return StringUtils.defaultString(value).replace("[", "\\[").replace("]", "\\]");
+    }
+
+    private static boolean hasValidResponseSpanMetadata(CitationRef citation) {
+        return citation != null
+                && citation.number() > 0
+                && citation.kind() == CitationKind.WEB
+                && citation.responseStartIndex() != null
+                && citation.responseEndIndex() != null;
+    }
+
+    private static Optional<PositionedCitation> toResponseSpan(CitationRef citation, String text) {
+        long start = citation.responseStartIndex();
+        long end = citation.responseEndIndex();
+        if (start < 0 || end <= start || end > text.length()) {
+            return Optional.empty();
+        }
+
+        int startIndex = Math.toIntExact(start);
+        int endIndex = Math.toIntExact(end);
+        if (!isCharacterBoundary(text, startIndex) || !isCharacterBoundary(text, endIndex)) {
+            return Optional.empty();
+        }
+        return Optional.of(new PositionedCitation(
+                new ResponseSpan(startIndex, endIndex),
+                citation.number()
+        ));
+    }
+
+    private static boolean isCharacterBoundary(String text, int index) {
+        return index <= 0
+                || index >= text.length()
+                || !Character.isHighSurrogate(text.charAt(index - 1))
+                || !Character.isLowSurrogate(text.charAt(index));
+    }
+
+    private static boolean containsAllInlineMarkers(String text, Iterable<TreeSet<Integer>> groupedNumbers) {
+        String inlineText = answerBeforeSources(text);
+        Map<Integer, Integer> requiredOccurrences = new TreeMap<>();
+        groupedNumbers.forEach(numbers -> numbers.forEach(number -> requiredOccurrences.merge(number, 1, Integer::sum)));
+        return requiredOccurrences.entrySet().stream().allMatch(entry -> {
+            Pattern markerPattern = Pattern.compile("(?<!\\d)\\[%d](?!\\d)".formatted(entry.getKey()));
+            return markerPattern.matcher(inlineText).results().count() >= entry.getValue();
+        });
+    }
+
+    private static String answerBeforeSources(String text) {
+        int offset = 0;
+        for (String line : text.split("\\R", -1)) {
+            if (Strings.CI.equals(normalizeHeadingLine(line), "sources")) {
+                return text.substring(0, offset);
+            }
+            offset += line.length() + 1;
+        }
+        return text;
+    }
+
+    private static Set<ResponseSpan> findConflictingSpans(List<ResponseSpan> spans) {
+        Set<ResponseSpan> conflicts = new HashSet<>();
+        for (int leftIndex = 0; leftIndex < spans.size(); leftIndex++) {
+            ResponseSpan left = spans.get(leftIndex);
+            for (int rightIndex = leftIndex + 1; rightIndex < spans.size(); rightIndex++) {
+                ResponseSpan right = spans.get(rightIndex);
+                if (left.start() < right.end() && right.start() < left.end()) {
+                    conflicts.add(left);
+                    conflicts.add(right);
+                }
+            }
+        }
+        return conflicts;
+    }
+
+    private static List<ResponseReplacement> mergeAdjacentReplacements(List<ResponseReplacement> replacements) {
+        List<ResponseReplacement> merged = new ArrayList<>();
+        replacements.forEach(replacement -> {
+            if (merged.isEmpty()) {
+                merged.add(replacement);
+                return;
+            }
+            ResponseReplacement previous = merged.getLast();
+            if (previous.span().end() != replacement.span().start()) {
+                merged.add(replacement);
+                return;
+            }
+            TreeSet<Integer> numbers = new TreeSet<>(previous.numbers());
+            numbers.addAll(replacement.numbers());
+            merged.set(
+                    merged.size() - 1,
+                    new ResponseReplacement(
+                            new ResponseSpan(previous.span().start(), replacement.span().end()),
+                            numbers
+                    )
+            );
+        });
+        return List.copyOf(merged);
     }
 
     private static boolean hasSourceSectionWithUrls(String text) {
@@ -151,42 +306,15 @@ final class AssistantSourceFormatter {
         }
     }
 
-    private static String extractWebSearchSourcesFromAssistantText(String assistantText) {
-        if (StringUtils.isBlank(assistantText)) {
-            return "";
-        }
-
-        List<String> sourceItems = Arrays.stream(assistantText.split("\\R"))
-                .map(SOURCE_URL_PATTERN::matcher)
-                .filter(Matcher::find)
-                .map(AssistantSourceFormatter::matchedSourceItem)
-                .filter(StringUtils::isNotBlank)
-                .distinct()
-                .limit(10)
-                .toList();
-        if (sourceItems.isEmpty()) {
-            return "";
-        }
-
-        StringBuilder sources = new StringBuilder();
-        sourceItems.forEach(item -> sources.append("- ").append(item).append("\n"));
-        return sources.toString().trim();
+    private record ResponseSpan(int start, int end) {
     }
 
-    private static String matchedSourceItem(Matcher matcher) {
-        String match = StringUtils.trimToEmpty(matcher.group());
-        return Strings.CI.startsWith(match, "http://") || Strings.CI.startsWith(match, "https://")
-                ? markdownLinkDestination(matchedSourceUrl(matcher))
-                : match;
+    private record PositionedCitation(ResponseSpan span, int number) {
     }
 
-    private static String matchedSourceUrl(Matcher matcher) {
-        for (int i = 1; i <= matcher.groupCount(); i++) {
-            String value = matcher.group(i);
-            if (StringUtils.isNotBlank(value)) {
-                return value;
-            }
+    private record ResponseReplacement(ResponseSpan span, TreeSet<Integer> numbers) {
+        private ResponseReplacement {
+            numbers = new TreeSet<>(numbers);
         }
-        return "";
     }
 }

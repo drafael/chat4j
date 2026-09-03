@@ -1,6 +1,8 @@
 package com.github.drafael.chat4j.chat.conversation;
 
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -62,6 +64,41 @@ class ConversationTurnFingerprintTest {
                 "",
                 "**Sources consulted**\n- https://example.test/two",
                 List.of()
+        );
+
+        assertThat(changed).isNotEqualTo(first);
+    }
+
+    @Test
+    @DisplayName("Citation response placements participate in durable turn fingerprints")
+    void create_whenCitationResponseSpanChanges_returnsDifferentFingerprint() {
+        var firstCitation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .url("https://example.com")
+                .responseStartIndex(4L)
+                .responseEndIndex(10L)
+                .build();
+        var movedCitation = firstCitation.toBuilder()
+                .responseStartIndex(12L)
+                .responseEndIndex(18L)
+                .build();
+
+        String first = ConversationTurnFingerprint.create(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                List.of(),
+                false,
+                "",
+                List.of(firstCitation)
+        );
+        String changed = ConversationTurnFingerprint.create(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                List.of(),
+                false,
+                "",
+                List.of(movedCitation)
         );
 
         assertThat(changed).isNotEqualTo(first);

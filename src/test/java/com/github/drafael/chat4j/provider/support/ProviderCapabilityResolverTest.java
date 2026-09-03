@@ -1796,6 +1796,29 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("OpenRouter OpenAI models offer server Web Search only on the documented endpoint")
+    void nativeWebSearchOutcome_whenOpenRouterOpenAiModelIsSelected_returnsOptionalOnlyOnDefaultEndpoint() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenRouter",
+                "openai/gpt-5-mini",
+                "https://openrouter.ai/api/v1",
+                "https://openrouter.ai/api/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenRouter",
+                "openai/gpt-5-mini",
+                "https://proxy.example/v1",
+                "https://openrouter.ai/api/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenRouter",
+                "anthropic/claude-sonnet-4",
+                "https://openrouter.ai/api/v1",
+                "https://openrouter.ai/api/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
     @DisplayName("xAI native search uses the same exact model family as request routing")
     void nativeWebSearchOutcome_whenXaiModelOnlyContainsGrokFamily_returnsUnsupported() {
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
@@ -1827,6 +1850,29 @@ class ProviderCapabilityResolverTest {
                 "https://api.openai.com/v1",
                 "https://api.openai.com/v1"
         )).isEqualTo(NativeWebSearchOutcome.PENDING);
+    }
+
+    @Test
+    @DisplayName("OpenAI GPT-5 Search API requires search only on the documented endpoint")
+    void nativeWebSearchOutcome_whenGpt5SearchApiIsSelected_returnsRequiredOnlyOnDefaultEndpoint() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI",
+                "gpt-5-search-api",
+                "https://api.openai.com/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI",
+                "gpt-5-search-api",
+                "https://proxy.example/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI",
+                "vendor-gpt-5-search-api",
+                "https://api.openai.com/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
     }
 
     @Test

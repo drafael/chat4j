@@ -181,6 +181,8 @@ class ConversationMessageJsonCodec {
         putNullableLong(node, "endBlock", value.endBlock());
         node.put("source", value.source());
         putNullableLong(node, "searchResultIndex", value.searchResultIndex());
+        putNullableLong(node, "responseStartIndex", value.responseStartIndex());
+        putNullableLong(node, "responseEndIndex", value.responseEndIndex());
         return node;
     }
 
@@ -330,6 +332,8 @@ class ConversationMessageJsonCodec {
                     .endBlock(readOptionalLong(node, "endBlock"))
                     .source(node.path("source").asText(""))
                     .searchResultIndex(readOptionalLong(node, "searchResultIndex"))
+                    .responseStartIndex(readOptionalLong(node, "responseStartIndex"))
+                    .responseEndIndex(readOptionalLong(node, "responseEndIndex"))
                     .build());
         } catch (Exception e) {
             return Optional.empty();

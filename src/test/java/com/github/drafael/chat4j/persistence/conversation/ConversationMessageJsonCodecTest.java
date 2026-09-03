@@ -62,6 +62,8 @@ class ConversationMessageJsonCodecTest {
                 .fileId("file_123")
                 .startPage(4L)
                 .endPage(5L)
+                .responseStartIndex(12L)
+                .responseEndIndex(28L)
                 .build();
         var meta = new MessageMeta(List.of("skill"), List.of("notice"), false, "", "thinking", "web", List.of(), List.of(citation));
 

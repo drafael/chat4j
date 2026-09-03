@@ -82,4 +82,34 @@ class ConversationPdfDocumentTest {
                         "answer"
                 );
     }
+
+    @Test
+    @DisplayName("PDF turns list a repeated citation source only once")
+    void constructor_whenCitationNumberHasMultiplePlacements_deduplicatesSourceMetadata() {
+        var first = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Example")
+                .url("https://example.com")
+                .responseStartIndex(5L)
+                .responseEndIndex(10L)
+                .build();
+        var repeated = first.toBuilder()
+                .responseStartIndex(20L)
+                .responseEndIndex(25L)
+                .build();
+
+        var turn = new ConversationPdfDocument.Turn(
+                Role.ASSISTANT,
+                Instant.EPOCH,
+                List.of(new TextPart("Fact [1]. Another [1].")),
+                List.of(),
+                false,
+                "",
+                List.of(first, repeated)
+        );
+
+        assertThat(turn.citations()).containsExactly(first);
+        assertThat(turn.textForRendering()).isEqualTo("Fact [1]. Another [1].");
+    }
 }

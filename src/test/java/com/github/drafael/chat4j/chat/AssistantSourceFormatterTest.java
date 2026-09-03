@@ -23,7 +23,6 @@ class AssistantSourceFormatterTest {
 
         String merged = AssistantSourceFormatter.mergeWebSearchActivityWithAnswerSources(
                 true,
-                "Answer [1]",
                 "**Searched**\n- current OpenAI docs",
                 citations
         );
@@ -40,7 +39,6 @@ class AssistantSourceFormatterTest {
 
         String merged = AssistantSourceFormatter.mergeWebSearchActivityWithAnswerSources(
                 false,
-                "Answer with https://platform.openai.com/docs",
                 existing,
                 List.of(webCitation(1, "OpenAI docs", "https://platform.openai.com/docs"))
         );
@@ -49,18 +47,17 @@ class AssistantSourceFormatterTest {
     }
 
     @Test
-    @DisplayName("Answer URLs supply Web Search activity when structured citations are absent")
-    void mergeWebSearchActivityWithAnswerSources_whenCitationsAreAbsent_extractsAnswerUrls() {
+    @DisplayName("Answer URLs do not become sources when structured citations are absent")
+    void mergeWebSearchActivityWithAnswerSources_whenCitationsAreAbsent_keepsExistingActivity() {
+        String existing = "**Searched**\n- example documentation";
+
         String merged = AssistantSourceFormatter.mergeWebSearchActivityWithAnswerSources(
                 true,
-                "Documentation: https://example.com/docs",
-                "**Searched**\n- example documentation",
+                existing,
                 List.of()
         );
 
-        assertThat(merged)
-                .contains("**Sources**")
-                .contains("- <https://example.com/docs>");
+        assertThat(merged).isEqualTo(existing);
     }
 
     @Test
@@ -247,12 +244,143 @@ class AssistantSourceFormatterTest {
         assertThat(text).isEqualTo(existing);
     }
 
+    @Test
+    @DisplayName("Native response spans become numbered inline citation markers")
+    void normalizeResponseCitationMarkers_whenSpanIsValid_replacesProviderCitationText() {
+        String answer = "Fact <provider-citation>.";
+        List<CitationRef> citations = List.of(webCitation(
+                1,
+                "Example",
+                "https://example.com",
+                5L,
+                24L
+        ));
+
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers(answer, citations);
+
+        assertThat(normalized).isEqualTo("Fact [1].");
+    }
+
+    @Test
+    @DisplayName("Multiple sources sharing a span become adjacent markers")
+    void normalizeResponseCitationMarkers_whenSourcesShareSpan_rendersAllSourceNumbers() {
+        String answer = "Fact <citation>.";
+        List<CitationRef> citations = List.of(
+                webCitation(2, "Second", "https://example.com/two", 5L, 15L),
+                webCitation(1, "First", "https://example.com/one", 5L, 15L)
+        );
+
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers(answer, citations);
+
+        assertThat(normalized).isEqualTo("Fact [1][2].");
+    }
+
+    @Test
+    @DisplayName("Distinct placements are replaced from the end without shifting earlier spans")
+    void normalizeResponseCitationMarkers_whenSourceAppearsTwice_replacesBothPlacements() {
+        String answer = "Alpha <one> beta <two>.";
+        List<CitationRef> citations = List.of(
+                webCitation(1, "Example", "https://example.com", 6L, 11L),
+                webCitation(1, "Example", "https://example.com", 17L, 22L)
+        );
+
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers(answer, citations);
+
+        assertThat(normalized).isEqualTo("Alpha [1] beta [1].");
+    }
+
+    @Test
+    @DisplayName("Adjacent provider citation spans collapse into one marker group")
+    void normalizeResponseCitationMarkers_whenSpansAreAdjacent_collapsesMarkers() {
+        String answer = "Fact <one><two>.";
+        List<CitationRef> citations = List.of(
+                webCitation(1, "First", "https://example.com/one", 5L, 10L),
+                webCitation(2, "Second", "https://example.com/two", 10L, 15L)
+        );
+
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers(answer, citations);
+
+        assertThat(normalized).isEqualTo("Fact [1][2].");
+    }
+
+    @Test
+    @DisplayName("Conflicting and out-of-range spans leave provider text unchanged")
+    void normalizeResponseCitationMarkers_whenSpansAreInvalid_doesNotGuessPlacement() {
+        String answer = "abcdef";
+        List<CitationRef> citations = List.of(
+                webCitation(1, "First", "https://example.com/one", 1L, 4L),
+                webCitation(2, "Second", "https://example.com/two", 3L, 5L),
+                webCitation(3, "Third", "https://example.com/three", 8L, 12L)
+        );
+
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers(answer, citations);
+
+        assertThat(normalized).isEqualTo(answer);
+    }
+
+    @Test
+    @DisplayName("Response spans cannot split a Unicode surrogate pair")
+    void normalizeResponseCitationMarkers_whenSpanSplitsUnicodeCharacter_doesNotReplaceText() {
+        String answer = "😀 fact <cite>";
+        List<CitationRef> citations = List.of(webCitation(
+                1,
+                "Example",
+                "https://example.com",
+                1L,
+                8L
+        ));
+
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers(answer, citations);
+
+        assertThat(normalized).isEqualTo(answer);
+    }
+
+    @Test
+    @DisplayName("Cancelled partial responses retain only complete native citation spans")
+    void citationsValidForPartialResponse_whenCitationSpanIsIncomplete_removesInvalidPlacement() {
+        List<CitationRef> citations = List.of(
+                webCitation(1, "Complete", "https://example.com/complete", 5L, 15L),
+                webCitation(2, "Incomplete", "https://example.com/incomplete", 20L, 30L),
+                webCitation(3, "Unpositioned", "https://example.com/unpositioned")
+        );
+
+        List<CitationRef> retained = AssistantSourceFormatter.citationsValidForPartialResponse(
+                "Fact <citation>. partial",
+                citations
+        );
+
+        assertThat(retained).extracting(CitationRef::number).containsExactly(1, 3);
+    }
+
+    @Test
+    @DisplayName("Citation normalization is stable when applied more than once")
+    void normalizeResponseCitationMarkers_whenAlreadyNormalized_keepsText() {
+        List<CitationRef> citations = List.of(webCitation(
+                1,
+                "Example",
+                "https://example.com",
+                5L,
+                15L
+        ));
+        String normalized = AssistantSourceFormatter.normalizeResponseCitationMarkers("Fact <citation>.", citations);
+
+        String repeated = AssistantSourceFormatter.normalizeResponseCitationMarkers(normalized, citations);
+
+        assertThat(repeated).isEqualTo(normalized);
+    }
+
     private CitationRef webCitation(int number, String title, String url) {
+        return webCitation(number, title, url, null, null);
+    }
+
+    private CitationRef webCitation(int number, String title, String url, Long responseStartIndex, Long responseEndIndex) {
         return CitationRef.builder()
                 .number(number)
                 .kind(CitationKind.WEB)
                 .title(title)
                 .url(url)
+                .responseStartIndex(responseStartIndex)
+                .responseEndIndex(responseEndIndex)
                 .build();
     }
 }

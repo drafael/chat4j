@@ -19,7 +19,9 @@ class OpenAiCompatibleCitationMapperTest {
         List<CitationRef> citations = OpenAiCompatibleCitationMapper.fromResponseAnnotation(JsonValue.from(Map.of(
                 "type", "url_citation",
                 "title", "OpenAI Docs",
-                "url", "https://platform.openai.com/docs"
+                "url", "https://platform.openai.com/docs",
+                "start_index", 12,
+                "end_index", 34
         )));
 
         assertThat(citations)
@@ -28,6 +30,8 @@ class OpenAiCompatibleCitationMapperTest {
                     assertThat(citation.kind()).isEqualTo(CitationKind.WEB);
                     assertThat(citation.title()).isEqualTo("OpenAI Docs");
                     assertThat(citation.url()).isEqualTo("https://platform.openai.com/docs");
+                    assertThat(citation.responseStartIndex()).isEqualTo(12L);
+                    assertThat(citation.responseEndIndex()).isEqualTo(34L);
                 });
     }
 
@@ -111,6 +115,24 @@ class OpenAiCompatibleCitationMapperTest {
         ));
 
         assertThat(citations).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Camel-case response indexes map to answer span metadata")
+    void fromResponseAnnotation_whenIndexesUseCamelCase_mapsResponseSpan() {
+        List<CitationRef> citations = OpenAiCompatibleCitationMapper.fromResponseAnnotation(JsonValue.from(Map.of(
+                "type", "url_citation",
+                "url", "https://example.com",
+                "startIndex", 3,
+                "endIndex", 9
+        )));
+
+        assertThat(citations)
+                .singleElement()
+                .satisfies(citation -> {
+                    assertThat(citation.responseStartIndex()).isEqualTo(3L);
+                    assertThat(citation.responseEndIndex()).isEqualTo(9L);
+                });
     }
 
     @Test

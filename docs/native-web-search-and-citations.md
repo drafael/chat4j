@@ -5,7 +5,7 @@ Chat4J's Web Search control applies only to the selected provider, model, and ef
 ## Runtime behavior
 
 - **Optional search** shows a directly toggleable Web Search button.
-- **Required search** shows the button selected and locked because the selected transport has no non-searching mode. This includes standalone Perplexity Sonar, Groq Compound, OpenRouter `:online`/namespaced Sonar, and OpenAI search-preview models on their documented endpoints.
+- **Required search** shows the button selected and locked because the selected transport has no non-searching mode. This includes standalone Perplexity Sonar, Groq Compound, OpenRouter `:online`/namespaced Sonar, and OpenAI `gpt-5-search-api` and search-preview models on their documented endpoints.
 - **Unsupported or unresolved search** hides the button.
 - Agent Mode and effective Web Search are mutually exclusive.
 - A native-search failure is reported normally. Chat4J does not retry the request without search.
@@ -22,11 +22,13 @@ Perplexity remains a standalone chat provider. It is not used to add search to a
 | Connector-capable Mistral models on the official endpoint | Optional Conversations `web_search` | Claim-linked `tool_reference` citations |
 | OpenAI Codex CLI models | Optional CLI/app-server search with explicit `live` or `disabled` mode | Opened pages under **Sources consulted** when supplied |
 | GitHub Copilot `gpt-5.4-mini` on the official endpoint with `/responses` metadata | Optional Responses `web_search` | URL citation annotations |
-| OpenAI tool-capable models | Optional Responses `web_search` | URL citation annotations |
-| OpenAI search-preview models | Required Chat Completions route | Provider response citations |
+| OpenAI tool-capable models | Optional Responses `web_search` | Claim-linked URL citation annotations |
+| OpenAI `gpt-5-search-api` | Required Chat Completions route | Provider response citations |
+| OpenAI search-preview models | Required legacy Chat Completions route | Provider response citations |
 | xAI Grok | Optional Responses web search | URL citation annotations |
 | Google Gemini | Optional native `google_search` grounding | Grounding citations |
 | Groq Compound | Required model-semantic search | Search-result citation metadata when supplied |
+| OpenRouter `openai/*` models on the official endpoint | Optional `openrouter:web_search` Chat Completions server tool | Claim-linked URL citation annotations when supplied |
 | OpenRouter `:online` / namespaced Sonar | Required model-semantic search | URL annotations when supplied |
 | Perplexity Sonar | Required standalone-provider search | Citations and search results |
 
@@ -42,7 +44,7 @@ Ollama and LM Studio remain unsupported. Ollama's hosted search endpoint is a se
 
 ## Citations versus consulted sources
 
-`CitationRef` represents provider metadata that associates evidence with an answer claim. Chat4J numbers, persists, renders, and exports those citations.
+`CitationRef` represents provider metadata that associates evidence with an answer claim. Chat4J numbers, persists, renders, and exports those citations. When an OpenAI-compatible provider supplies valid response `start_index` and `end_index` values, Chat4J replaces the provider citation span with its standard inline `[n]` marker before persistence. Duplicate source URLs keep one number across distinct placements. Missing, conflicting, unsafe, or out-of-range spans are not guessed; their valid source metadata can still appear in the Sources list.
 
 `WebSearchSource` represents a page the provider reports consulting without a documented claim association. DeepSeek and Codex opened-page events use this form. Chat4J renders it under **Sources consulted** and never fabricates claim-level citation markers from source order.
 
@@ -60,6 +62,6 @@ Native search activity, citations, consulted sources, attachments, cancellation,
 - xAI web search: https://docs.x.ai/developers/tools/web-search
 - Perplexity Sonar API: https://docs.perplexity.ai/api-reference/sonar-post.md
 - Groq built-in web search: https://console.groq.com/docs/tool-use/built-in-tools/web-search
-- OpenRouter web search: https://openrouter.ai/docs/guides/features/plugins/web-search
+- OpenRouter web search: https://openrouter.ai/docs/guides/features/server-tools/web-search
 - Ollama hosted web search: https://docs.ollama.com/capabilities/web-search
 - LM Studio tools and MCP: https://lmstudio.ai/docs/developer/core/mcp

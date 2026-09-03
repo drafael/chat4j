@@ -120,6 +120,8 @@ public final class ConversationTurnFingerprint {
         addField(digest, "citation-end-block", citation.endBlock());
         addField(digest, "citation-source", citation.source());
         addField(digest, "citation-search-result-index", citation.searchResultIndex());
+        addField(digest, "citation-response-start-index", citation.responseStartIndex());
+        addField(digest, "citation-response-end-index", citation.responseEndIndex());
     }
 
     private static void addField(MessageDigest digest, String name, Object value) {

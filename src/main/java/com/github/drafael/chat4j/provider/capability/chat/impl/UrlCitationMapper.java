@@ -13,6 +13,16 @@ final class UrlCitationMapper {
     }
 
     static Optional<CitationRef> fromUrl(String title, String url, String citedText) {
+        return fromUrl(title, url, citedText, null, null);
+    }
+
+    static Optional<CitationRef> fromUrl(
+            String title,
+            String url,
+            String citedText,
+            Long responseStartIndex,
+            Long responseEndIndex
+    ) {
         String trimmedUrl = StringUtils.trimToEmpty(url);
         if (!ExternalLinkSupport.isAllowedHttpLink(trimmedUrl)) {
             return Optional.empty();
@@ -23,6 +33,8 @@ final class UrlCitationMapper {
                 .title(StringUtils.trimToEmpty(title))
                 .url(trimmedUrl)
                 .citedText(StringUtils.trimToEmpty(citedText))
+                .responseStartIndex(responseStartIndex)
+                .responseEndIndex(responseEndIndex)
                 .build());
     }
 }

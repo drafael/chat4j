@@ -3,13 +3,16 @@ package com.github.drafael.chat4j.provider.capability.chat.impl;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import org.apache.commons.lang3.StringUtils;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 final class CitationAccumulator {
 
     private final Map<String, CitationRef> citationsByKey = new LinkedHashMap<>();
+    private final Set<String> emittedOccurrenceKeys = new HashSet<>();
 
     CitationRef add(CitationRef citation) {
         if (citation == null) {
@@ -26,8 +29,14 @@ final class CitationAccumulator {
             return Optional.empty();
         }
 
-        String key = dedupeKey(citation);
-        return citationsByKey.containsKey(key) ? Optional.empty() : Optional.of(addWithKey(key, citation));
+        String sourceKey = dedupeKey(citation);
+        CitationRef existing = citationsByKey.get(sourceKey);
+        CitationRef numbered = existing == null
+                ? addWithKey(sourceKey, citation)
+                : citation.withNumber(existing.number());
+        return emittedOccurrenceKeys.add(occurrenceKey(sourceKey, numbered))
+                ? Optional.of(numbered)
+                : Optional.empty();
     }
 
     private CitationRef addWithKey(String key, CitationRef citation) {
@@ -58,6 +67,17 @@ final class CitationAccumulator {
                 value(citation.source()),
                 value(citation.searchResultIndex()),
                 value(citation.citedText())
+        );
+    }
+
+    private String occurrenceKey(String sourceKey, CitationRef citation) {
+        if (citation.responseStartIndex() == null || citation.responseEndIndex() == null) {
+            return sourceKey;
+        }
+        return "%s|%d|%d".formatted(
+                sourceKey,
+                citation.responseStartIndex(),
+                citation.responseEndIndex()
         );
     }
 

@@ -182,7 +182,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 return;
             }
 
-            if (isOpenAiSearchPreviewModel(runtime)) {
+            if (isOpenAiRequiredSearchModel(runtime)) {
                 if (webSearchOptions != null && webSearchOptions.enabled()
                         && !Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())) {
                     throw new IllegalArgumentException("Native Web Search is unavailable for this provider endpoint.");
@@ -197,6 +197,10 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         throw new IllegalArgumentException("Native Web Search is unavailable for this provider endpoint.");
                     }
                     streamWithResponses(runtime, projectionPlan, client, normalizedReasoningLevel, true, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+                    return;
+                }
+                if (usesOpenRouterServerWebSearchTransport(runtime)) {
+                    streamWithChatCompletions(runtime, projectionPlan, client, normalizedReasoningLevel, true, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
                     return;
                 }
                 if (!usesRequiredChatCompletionsSearchTransport(runtime)) {
@@ -254,18 +258,31 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         String providerName = runtime.descriptor().name();
         if (Strings.CS.equals(providerName, "OpenAI")) {
             return Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())
-                    && !isOpenAiSearchPreviewModel(runtime);
+                    && !isOpenAiRequiredSearchModel(runtime);
         }
         return Strings.CS.equals(providerName, "xAI")
                 && Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())
                 && ProviderCapabilityResolver.supportsXaiNativeWebSearch(runtime.selectedModel());
     }
 
-    private boolean isOpenAiSearchPreviewModel(ProviderRuntime runtime) {
+    private boolean usesOpenRouterServerWebSearchTransport(ProviderRuntime runtime) {
+        if (runtime == null || runtime.descriptor() == null
+                || !Strings.CS.equals(runtime.descriptor().name(), "OpenRouter")) {
+            return false;
+        }
+        return ProviderCapabilityResolver.nativeWebSearchOutcome(
+                runtime.descriptor().name(),
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.normalizedDefaultBaseUrl()
+        ).optional();
+    }
+
+    private boolean isOpenAiRequiredSearchModel(ProviderRuntime runtime) {
         return runtime != null
                 && runtime.descriptor() != null
                 && Strings.CS.equals(runtime.descriptor().name(), "OpenAI")
-                && ProviderCapabilityResolver.isOpenAiSearchPreviewModel(runtime.selectedModel());
+                && ProviderCapabilityResolver.isOpenAiRequiredSearchModel(runtime.selectedModel());
     }
 
     private Consumer<CitationRef> noOpIfNull(Consumer<CitationRef> onCitation) {
@@ -385,6 +402,34 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
+        streamWithChatCompletions(
+                runtime,
+                projectionPlan,
+                client,
+                reasoningLevel,
+                false,
+                onToken,
+                onThinkingToken,
+                onCitation,
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
+
+    private void streamWithChatCompletions(
+            ProviderRuntime runtime,
+            AttachmentProjectionPlan projectionPlan,
+            OpenAIClient client,
+            ReasoningLevel reasoningLevel,
+            boolean openRouterWebSearchEnabled,
+            Consumer<String> onToken,
+            Consumer<String> onThinkingToken,
+            Consumer<CitationRef> onCitation,
+            BooleanSupplier isCancelled,
+            Consumer<AutoCloseable> registerActiveStream,
+            Runnable clearActiveStream
+    ) throws Exception {
         List<ChatCompletionMessageParam> messages = projectionPlan.messages().stream()
                 .map(this::toParam)
                 .toList();
@@ -402,6 +447,12 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     .model(ChatModel.of(runtime.selectedModel()))
                     .messages(messages);
             applyChatCompletionsThinkingHints(paramsBuilder, runtime, attemptLevel);
+            if (openRouterWebSearchEnabled) {
+                paramsBuilder.putAdditionalBodyProperty(
+                        "tools",
+                        JsonValue.from(List.of(Map.of("type", "openrouter:web_search")))
+                );
+            }
             ChatCompletionCreateParams params = paramsBuilder.build();
             if (shouldStop(isCancelled)) {
                 return;

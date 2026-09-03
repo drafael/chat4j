@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.chat.render.WebSearchActivityNormalizer;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.regex.Pattern;
 import lombok.Builder;
@@ -17,7 +18,9 @@ import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
+import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toMap;
 
 @Builder
 public record ConversationPdfDocument(
@@ -87,7 +90,17 @@ public record ConversationPdfDocument(
             fallbackNotices = fallbackNotices == null ? emptyList() : List.copyOf(fallbackNotices);
             error = StringUtils.defaultString(error);
             assistantWebSearch = WebSearchActivityNormalizer.normalize(assistantWebSearch);
-            citations = citations == null ? emptyList() : List.copyOf(citations);
+            citations = citations == null
+                    ? emptyList()
+                    : List.copyOf(citations.stream()
+                            .filter(citation -> citation != null)
+                            .collect(toMap(
+                                    CitationRef::number,
+                                    identity(),
+                                    (existing, replacement) -> existing,
+                                    LinkedHashMap::new
+                            ))
+                            .values());
         }
 
         private static Turn from(Message message) {

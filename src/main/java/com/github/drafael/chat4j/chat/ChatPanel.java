@@ -6305,7 +6305,7 @@ public class ChatPanel extends JPanel {
                 return;
             }
             synchronized (session.responseCitations) {
-                if (session.responseCitations.stream().anyMatch(existing -> existing.number() == citation.number())) {
+                if (session.responseCitations.contains(citation)) {
                     return;
                 }
                 session.responseCitations.add(citation);
@@ -6483,15 +6483,18 @@ public class ChatPanel extends JPanel {
         }
         List<AgentToolActivityMeta> agentToolActivities = snapshotAgentToolActivities(session);
         List<CitationRef> citations = snapshotCitations(session);
+        if (session.cancelled.get()) {
+            citations = AssistantSourceFormatter.citationsValidForPartialResponse(assistantText, citations);
+        }
         boolean consultedSourceMode;
         synchronized (session.webSearchSourceLock) {
             consultedSourceMode = session.consultedSourceMode;
         }
         if (!consultedSourceMode) {
+            assistantText = AssistantSourceFormatter.normalizeResponseCitationMarkers(assistantText, citations);
             assistantText = AssistantSourceFormatter.appendCitationSourcesIfNeeded(assistantText, citations);
             assistantWebSearch = AssistantSourceFormatter.mergeWebSearchActivityWithAnswerSources(
                     sendJob != null && sendJob.webSearchEnabled,
-                    assistantText,
                     assistantWebSearch,
                     citations
             );

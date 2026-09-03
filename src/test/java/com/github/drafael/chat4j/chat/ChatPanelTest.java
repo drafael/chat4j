@@ -814,6 +814,63 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Citation callbacks retain distinct placements with the same source number")
+    void handleAssistantCitation_whenSourceNumberRepeatsAtDifferentSpans_retainsBothPlacements() throws Exception {
+        StreamingSession session = new StreamingSession(1L, UUID.randomUUID(), null);
+        var first = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .url("https://example.com")
+                .responseStartIndex(5L)
+                .responseEndIndex(10L)
+                .build();
+        var second = first.toBuilder()
+                .responseStartIndex(18L)
+                .responseEndIndex(23L)
+                .build();
+
+        invokeHandleAssistantCitation(subject, session, first);
+        invokeHandleAssistantCitation(subject, session, second);
+        invokeHandleAssistantCitation(subject, session, second);
+        runOnEdt(() -> {});
+
+        assertThat(session.responseCitations).containsExactly(first, second);
+    }
+
+    @Test
+    @DisplayName("Assistant finalization normalizes native citation spans before persistence")
+    void prepareAssistantResponse_whenNativeCitationSpansArePresent_persistsInlineMarkersAndSources() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+        appendAssistantResponse(session, "Fact <citation>.");
+        session.responseCitations.add(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Example")
+                .url("https://example.com")
+                .responseStartIndex(5L)
+                .responseEndIndex(15L)
+                .build());
+
+        Object prepared = invokePrepareAssistantResponse(
+                subject,
+                session,
+                webSearchSendJob(1L, conversationId, "OpenAI", "gpt-5", "https://api.openai.com/v1")
+        );
+        ConversationHistoryEntry entry = preparedAssistantEntry(prepared);
+
+        assertThat(entry.message().content())
+                .startsWith("Fact [1].")
+                .contains("Sources:\n[1] [Example](<https://example.com>)");
+        assertThat(entry.message().meta().citations())
+                .singleElement()
+                .satisfies(citation -> {
+                    assertThat(citation.responseStartIndex()).isEqualTo(5L);
+                    assertThat(citation.responseEndIndex()).isEqualTo(15L);
+                });
+    }
+
+    @Test
     @DisplayName("DeepSeek consulted sources remain structured and do not scrape answer links")
     void prepareAssistantResponse_whenConsultedSourceMode_doesNotScrapeAnswerLinks() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -8388,6 +8445,20 @@ class ChatPanelTest {
         );
         method.setAccessible(true);
         method.invoke(chatPanel, session, sendJob, token);
+    }
+
+    private static void invokeHandleAssistantCitation(
+            ChatPanel chatPanel,
+            StreamingSession session,
+            CitationRef citation
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "handleAssistantCitation",
+                StreamingSession.class,
+                CitationRef.class
+        );
+        method.setAccessible(true);
+        method.invoke(chatPanel, session, citation);
     }
 
     private static void invokeHandleAssistantWebSearchQuery(

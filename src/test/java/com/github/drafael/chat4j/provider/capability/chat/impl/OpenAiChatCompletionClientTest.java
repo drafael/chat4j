@@ -56,6 +56,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
@@ -815,6 +816,10 @@ class OpenAiChatCompletionClientTest {
                 runtime("OpenAI", "gpt-4o-search-preview"),
                 new WebSearchRequestOptions(true)
         )).isFalse();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(
+                runtime("OpenAI", "gpt-5-search-api"),
+                new WebSearchRequestOptions(true)
+        )).isFalse();
     }
 
     @Test
@@ -851,7 +856,8 @@ class OpenAiChatCompletionClientTest {
                     runtime("Groq", "compound", endpoint),
                     runtime("OpenRouter", "anthropic/claude-haiku:online", endpoint),
                     runtime("OpenRouter", "perplexity/sonar-pro", endpoint),
-                    runtime("OpenAI", "gpt-4o-search-preview", endpoint)
+                    runtime("OpenAI", "gpt-4o-search-preview", endpoint),
+                    runtime("OpenAI", "gpt-5-search-api", endpoint)
             )) {
                 subject.streamCompletion(
                         runtime,
@@ -874,8 +880,67 @@ class OpenAiChatCompletionClientTest {
                 );
             }
 
-            assertThat(chatRequests).hasValue(4);
+            assertThat(chatRequests).hasValue(5);
             assertThat(responsesRequests).hasValue(0);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("OpenRouter Web Search sends the server tool and emits response citation spans")
+    void streamCompletion_whenOpenRouterWebSearchEnabled_sendsServerToolAndEmitsCitation() throws Exception {
+        var requestBody = new AtomicReference<String>();
+        List<CitationRef> citations = new ArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = """
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"content":"Fact <citation>."},"finish_reason":null}]}
+
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"annotations":[{"type":"url_citation","title":"Example","url":"https://example.com","start_index":5,"end_index":15}]},"finish_reason":"stop"}]}
+
+                    data: [DONE]
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+
+            subject.streamCompletion(
+                    runtime("OpenRouter", "openai/gpt-5-mini", endpoint),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    new WebSearchRequestOptions(true),
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    citations::add,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(requestBody.get()).contains("\"type\":\"openrouter:web_search\"");
+            assertThat(citations)
+                    .singleElement()
+                    .satisfies(citation -> {
+                        assertThat(citation.number()).isEqualTo(1);
+                        assertThat(citation.url()).isEqualTo("https://example.com");
+                        assertThat(citation.responseStartIndex()).isEqualTo(5L);
+                        assertThat(citation.responseEndIndex()).isEqualTo(15L);
+                    });
         } finally {
             server.stop(0);
         }
