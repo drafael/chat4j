@@ -32,6 +32,12 @@ Use this page as the canonical entry point for implementation and operational de
 
 ## Operations and packaging
 
+- [release-artifact-verification.md](release-artifact-verification.md)
+  - SHA-256 checksum validation and first-launch guidance for unsigned release artifacts.
+
+- [dependency-and-security-audits.md](dependency-and-security-audits.md)
+  - Coverage, SBOM, dependency vulnerability, and update checks.
+
 - [runtime-operations.md](runtime-operations.md)
   - Startup flow, configurable chat storage, macOS jpackage shell-environment loading, logging, and diagnostics.
 
