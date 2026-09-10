@@ -34,7 +34,7 @@ final class ModelRowComponent {
     private static final Dimension CAPABILITY_LABEL_SIZE = new Dimension(24, 24);
     private static final String STAR_OUTLINE_PATH = "/icons/sidebar/star.svg";
     private static final String STAR_FILLED_PATH = "/icons/sidebar/star-filled.svg";
-    private static final String IMAGE_CAPABILITY_PATH = "/icons/sidebar/eye.svg";
+    private static final String IMAGE_CAPABILITY_PATH = "/icons/sidebar/image.svg";
     private static final String REASONING_CAPABILITY_PATH = "/icons/sidebar/brain.svg";
     private static final String WEB_CAPABILITY_PATH = "/icons/input/globe.svg";
     private static final Color IMAGE_CAPABILITY_COLOR = new Color(44, 123, 255);
@@ -140,7 +140,7 @@ final class ModelRowComponent {
     }
 
     void updateCapabilities(boolean supportsImageInput, boolean supportsReasoning, boolean supportsNativeWebSearch) {
-        int eyeSize = Math.max(16, Fonts.scale(Fonts.SIZE_BODY_LARGE) + 2);
+        int imageSize = Math.max(16, Fonts.scale(Fonts.SIZE_BODY_LARGE) + 2);
         int brainSize = Math.max(14, Fonts.scale(Fonts.SIZE_BODY_LARGE));
         int webSize = Math.max(14, Fonts.scale(Fonts.SIZE_BODY_LARGE));
 
@@ -148,7 +148,7 @@ final class ModelRowComponent {
                 CAPABILITY_ICON_CACHE,
                 IMAGE_CAPABILITY_PATH,
                 IMAGE_CAPABILITY_COLOR,
-                eyeSize));
+                imageSize));
         imageCapabilityLabel.setVisible(supportsImageInput);
         imageCapabilityLabel.setToolTipText(supportsImageInput ? "Supports Image Input Natively" : null);
 

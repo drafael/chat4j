@@ -96,6 +96,28 @@ class ModelRowComponentTest {
     }
 
     @Test
+    @DisplayName("Image-capable models show the native image capability icon")
+    void updateCapabilities_whenImageInputIsSupported_showsImageCapabilityIcon() throws Exception {
+        CapabilityIconState iconState = callOnEdt(() -> {
+            var row = new ModelRowComponent(
+                    "Anthropic",
+                    "claude-sonnet",
+                    true,
+                    false,
+                    true,
+                    false,
+                    false,
+                    noOpListener()
+            );
+            JLabel capabilityLabel = labelWithTooltip(row, "Supports Image Input Natively");
+            return new CapabilityIconState(capabilityLabel.isVisible(), capabilityLabel.getIcon() != null);
+        });
+
+        assertThat(iconState.visible()).isTrue();
+        assertThat(iconState.iconPresent()).isTrue();
+    }
+
+    @Test
     @DisplayName("Favorite star toggles only once on mouse press")
     void mousePressed_whenFavoriteStarPressed_togglesFavoriteOnce() throws Exception {
         var toggleCalls = new AtomicInteger();
@@ -162,16 +184,20 @@ class ModelRowComponentTest {
     }
 
     private static JLabel favoriteLabel(ModelRowComponent row) {
+        return labelWithTooltip(row, "Add to favorites");
+    }
+
+    private static JLabel labelWithTooltip(ModelRowComponent row, String tooltip) {
         for (Component component : row.panel().getComponents()) {
             if (component instanceof JPanel panel) {
                 for (Component child : panel.getComponents()) {
-                    if (child instanceof JLabel label && "Add to favorites".equals(label.getToolTipText())) {
+                    if (child instanceof JLabel label && tooltip.equals(label.getToolTipText())) {
                         return label;
                     }
                 }
             }
         }
-        throw new AssertionError("Favorite label not found");
+        throw new AssertionError("Label with tooltip '%s' not found".formatted(tooltip));
     }
 
     private static <T> T callOnEdt(Callable<T> action) throws Exception {
@@ -219,5 +245,8 @@ class ModelRowComponentTest {
         for (var listener : component.getMouseListeners()) {
             listener.mousePressed(event);
         }
+    }
+
+    private record CapabilityIconState(boolean visible, boolean iconPresent) {
     }
 }
