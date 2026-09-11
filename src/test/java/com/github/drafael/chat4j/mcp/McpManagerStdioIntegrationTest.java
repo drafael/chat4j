@@ -250,9 +250,15 @@ class McpManagerStdioIntegrationTest {
         StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory);
         var subject = manager(storagePaths);
         Path pidFile = tempDirectory.resolve("eof.pid");
+        Path exitSignal = tempDirectory.resolve("exit-after-list.signal");
         McpServerConfiguration configured = stdioServer(
                 UUID.randomUUID().toString(),
-                List.of("--write-pid", pidFile.toString(), "--exit-after-list")
+                List.of(
+                        "--write-pid",
+                        pidFile.toString(),
+                        "--exit-after-list-signal",
+                        exitSignal.toString()
+                )
         );
         try {
             subject.saveAndApply(McpConfigurationDraft.withoutSecretChanges(
@@ -261,6 +267,7 @@ class McpManagerStdioIntegrationTest {
             long firstPid;
             try (McpRunSession ignored = subject.openRun(() -> false)) {
                 firstPid = Long.parseLong(Files.readString(pidFile));
+                Files.writeString(exitSignal, "");
                 awaitProcessExit(firstPid);
             }
 

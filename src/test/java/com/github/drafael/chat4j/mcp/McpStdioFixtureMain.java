@@ -58,7 +58,7 @@ public final class McpStdioFixtureMain {
             return;
         }
         boolean crlf = arguments.contains("--crlf");
-        boolean exitAfterList = arguments.contains("--exit-after-list");
+        int exitAfterListSignalOption = arguments.indexOf("--exit-after-list-signal");
         try (var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -98,7 +98,10 @@ public final class McpStdioFixtureMain {
                 ));
                 System.out.print(response + (crlf ? "\r\n" : "\n"));
                 System.out.flush();
-                if (exitAfterList && "tools/list".equals(method)) {
+                if (exitAfterListSignalOption >= 0 && "tools/list".equals(method)) {
+                    Path exitSignal = Path.of(arguments.get(exitAfterListSignalOption + 1));
+                    awaitFile(exitSignal);
+                    Files.deleteIfExists(exitSignal);
                     return;
                 }
             }
