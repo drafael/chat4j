@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import java.util.Locale;
 import java.util.Set;
 
 public final class ModelFilters {
@@ -18,7 +19,13 @@ public final class ModelFilters {
     }
 
     public static boolean isSupportedChatModelId(String modelId) {
-        String normalized = modelId.toLowerCase();
+        String normalized = modelId.toLowerCase(Locale.ROOT);
         return EXCLUDED_KEYWORDS.stream().noneMatch(normalized::contains);
+    }
+
+    public static boolean isSupportedChatModelId(String providerName, String modelId) {
+        boolean groqProvider = providerName != null && "Groq".equalsIgnoreCase(providerName.trim());
+        return isSupportedChatModelId(modelId)
+                && (!groqProvider || !modelId.toLowerCase(Locale.ROOT).startsWith("canopylabs/orpheus-"));
     }
 }

@@ -822,6 +822,51 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
+    @DisplayName("Groq catalog excludes speech models from chat model selection")
+    void fetchModels_whenGroqCatalogContainsSpeechModels_returnsChatModelsOnly() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            byte[] payload = """
+                    {
+                      "object": "list",
+                      "data": [
+                        {"id":"llama-3.3-70b-versatile","object":"model","created":4,"owned_by":"groq"},
+                        {"id":"canopylabs/orpheus-v1-english","object":"model","created":3,"owned_by":"canopylabs"},
+                        {"id":"canopylabs/orpheus-arabic-saudi","object":"model","created":2,"owned_by":"canopylabs"},
+                        {"id":"whisper-large-v3-turbo","object":"model","created":1,"owned_by":"openai"}
+                      ]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String endpoint = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            var descriptor = new ProviderDescriptor(
+                    "Groq",
+                    AuthType.ENV_VAR,
+                    "GROQ_API_KEY",
+                    null,
+                    endpoint,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            var runtime = new ProviderRuntime(descriptor, "GROQ_API_KEY", endpoint, "test-token", null);
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).containsExactly("llama-3.3-70b-versatile");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Mistral catalog excludes non-chat API models while retaining specialized chat models")
     void fetchModels_whenMistralCatalogContainsMixedFamilies_returnsChatModelsOnly() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

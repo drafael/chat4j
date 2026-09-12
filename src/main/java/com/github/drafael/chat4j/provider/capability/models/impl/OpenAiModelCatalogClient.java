@@ -331,9 +331,9 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     }
 
     private boolean isSupportedChatModel(ProviderRuntime runtime, String modelId) {
-        return ModelFilters.isSupportedChatModelId(modelId)
-                && (!"Mistral".equals(runtime.descriptor().name())
-                || MistralNativeWebSearchSupport.isChatModel(modelId));
+        String providerName = runtime.descriptor().name();
+        return ModelFilters.isSupportedChatModelId(providerName, modelId)
+                && (!"Mistral".equals(providerName) || MistralNativeWebSearchSupport.isChatModel(modelId));
     }
 
     private boolean supportsConfiguredApiEndpoint(ProviderRuntime runtime, Object modelEntry) {

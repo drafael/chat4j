@@ -226,6 +226,11 @@ public final class ModelOrdering {
                     .filter(TogetherModelSupport::isServerlessChatModel)
                     .toList();
         }
+        if (isGroq(providerName)) {
+            return modelIds.stream()
+                    .filter(modelId -> ModelFilters.isSupportedChatModelId(providerName, modelId))
+                    .toList();
+        }
         if (!isGitHubCopilot(providerName)) {
             return modelIds;
         }
@@ -247,6 +252,10 @@ public final class ModelOrdering {
                     return !(hasCanonicalGpt4oMini && COPILOT_GPT4O_MINI_DATED_ALIAS.matcher(normalized).matches());
                 })
                 .toList();
+    }
+
+    private static boolean isGroq(String providerName) {
+        return providerName != null && "groq".equalsIgnoreCase(providerName.trim());
     }
 
     private static boolean isOllama(String providerName) {

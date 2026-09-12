@@ -141,6 +141,19 @@ class ModelOrderingTest {
     }
 
     @Test
+    @DisplayName("Groq model ordering excludes speech models from cached chat catalogs")
+    void sanitizeAndSortByProvider_whenProviderIsGroq_filtersSpeechModels() {
+        List<String> sorted = ModelOrdering.sanitizeAndSortByProvider("Groq", List.of(
+                "llama-3.3-70b-versatile",
+                "canopylabs/orpheus-v1-english",
+                "canopylabs/orpheus-arabic-saudi",
+                "whisper-large-v3-turbo"
+        ));
+
+        assertThat(sorted).containsExactly("llama-3.3-70b-versatile");
+    }
+
+    @Test
     @DisplayName("Together model ordering publishes only exact reviewed serverless IDs")
     void sanitizeAndSortByProvider_whenProviderIsTogether_filtersUnknownAndWrongCaseIds() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByProvider(" together ", List.of(
