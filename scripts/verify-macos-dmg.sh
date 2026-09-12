@@ -52,16 +52,23 @@ if [[ -L "$applications_item" ]]; then
   fi
   applications_target="$(cd "$link_target" 2>/dev/null && pwd -P || true)"
 else
-  applications_target="$(osascript \
-    -e 'on run argv' \
-    -e 'set hfsPath to (POSIX file (item 1 of argv)) as text' \
-    -e 'tell application "Finder"' \
-    -e 'set aliasFile to item hfsPath' \
-    -e 'set targetItem to original item of aliasFile' \
-    -e 'return POSIX path of (targetItem as alias)' \
-    -e 'end tell' \
-    -e 'end run' \
-    "$applications_item" 2>/dev/null || true)"
+  applications_target=""
+  for attempt in {1..20}; do
+    applications_target="$(osascript \
+      -e 'on run argv' \
+      -e 'set hfsPath to (POSIX file (item 1 of argv)) as text' \
+      -e 'tell application "Finder"' \
+      -e 'set aliasFile to item hfsPath' \
+      -e 'set targetItem to original item of aliasFile' \
+      -e 'return POSIX path of (targetItem as alias)' \
+      -e 'end tell' \
+      -e 'end run' \
+      "$applications_item" 2>/dev/null || true)"
+    if [[ "$applications_target" == "/Applications" || "$applications_target" == "/Applications/" ]]; then
+      break
+    fi
+    sleep 0.25
+  done
 fi
 if [[ "$applications_target" != "/Applications" && "$applications_target" != "/Applications/" ]]; then
   echo "DMG verification failed: Applications item does not resolve to /Applications" >&2

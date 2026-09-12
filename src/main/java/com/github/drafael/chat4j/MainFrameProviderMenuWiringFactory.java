@@ -70,7 +70,6 @@ public class MainFrameProviderMenuWiringFactory {
                 providerModelMenuItemFactory
         );
         var providerMenuStructureRebuilder = new ProviderMenuStructureRebuilder(
-                providerMenuDataResolver,
                 providerFavoritesSectionAppender,
                 providerCatalogSectionAppender,
                 providerMenuEmptyStateFactory

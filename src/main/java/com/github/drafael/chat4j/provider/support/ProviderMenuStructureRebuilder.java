@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import lombok.NonNull;
 
 import javax.swing.ButtonGroup;
@@ -8,24 +7,20 @@ import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSeparator;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
 public class ProviderMenuStructureRebuilder {
 
-    private final ProviderMenuDataResolver providerMenuDataResolver;
     private final ProviderFavoritesSectionAppender providerFavoritesSectionAppender;
     private final ProviderCatalogSectionAppender providerCatalogSectionAppender;
     private final ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory;
 
     public ProviderMenuStructureRebuilder(
-            @NonNull ProviderMenuDataResolver providerMenuDataResolver,
             @NonNull ProviderFavoritesSectionAppender providerFavoritesSectionAppender,
             @NonNull ProviderCatalogSectionAppender providerCatalogSectionAppender,
             @NonNull ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory
     ) {
-        this.providerMenuDataResolver = providerMenuDataResolver;
         this.providerFavoritesSectionAppender = providerFavoritesSectionAppender;
         this.providerCatalogSectionAppender = providerCatalogSectionAppender;
         this.providerMenuEmptyStateFactory = providerMenuEmptyStateFactory;
@@ -35,7 +30,7 @@ public class ProviderMenuStructureRebuilder {
             @NonNull JMenu modelsMenu,
             @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
             @NonNull Map<String, JMenuItem> providerHeaderItemsByName,
-            @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull ProviderMenuDataResolver.ProviderMenuData menuData,
             @NonNull Consumer<String> onModelSelected
     ) {
 
@@ -43,12 +38,10 @@ public class ProviderMenuStructureRebuilder {
         modelMenuItemsByKey.clear();
         providerHeaderItemsByName.clear();
 
-        if (providers.isEmpty()) {
+        if (menuData.providers().isEmpty()) {
             modelsMenu.add(providerMenuEmptyStateFactory.noProvidersAvailableItem());
             return;
         }
-
-        ProviderMenuDataResolver.ProviderMenuData menuData = providerMenuDataResolver.resolve(providers);
 
         ButtonGroup group = new ButtonGroup();
         boolean favoritesAppended = providerFavoritesSectionAppender.append(
@@ -64,7 +57,7 @@ public class ProviderMenuStructureRebuilder {
                 group,
                 modelMenuItemsByKey,
                 providerHeaderItemsByName,
-                providers,
+                menuData.providers(),
                 menuData.modelsByProvider(),
                 menuData.providerSelectable(),
                 onModelSelected

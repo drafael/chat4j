@@ -1,113 +1,106 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
-import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
-import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
-import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
+import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProviderMenuStructureRebuilderTest {
 
-    @TempDir
-    Path tempDir;
-
     @Test
-    @DisplayName("Rebuild clears menu state and adds no-providers placeholder when providers list is empty")
-    void rebuild_whenProvidersEmpty_clearsStateAndAddsNoProvidersItem() {
-        var menuDataResolver = new ThrowingProviderMenuDataResolver();
+    @DisplayName("Rebuild clears menu state and adds no-providers placeholder when snapshot is empty")
+    void rebuild_whenProvidersEmpty_clearsStateAndAddsNoProvidersItem() throws Exception {
         var favoritesAppender = new StubProviderFavoritesSectionAppender();
         var catalogAppender = new StubProviderCatalogSectionAppender();
         var subject = new ProviderMenuStructureRebuilder(
-                menuDataResolver,
                 favoritesAppender,
                 catalogAppender,
                 new ProviderMenuEmptyStateFactory()
         );
-
-        JMenu modelsMenu = new JMenu("Model");
-        modelsMenu.add(new JMenuItem("stale"));
-        Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
-        modelMenuItemsByKey.put("stale", new JRadioButtonMenuItem("stale"));
-        Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
-        providerHeaderItemsByName.put("stale", new JMenuItem("stale"));
-
-        subject.rebuild(
-                modelsMenu,
-                modelMenuItemsByKey,
-                providerHeaderItemsByName,
+        var menuData = new ProviderMenuDataResolver.ProviderMenuData(
                 emptyList(),
-                modelKey -> {
-                }
+                emptyMap(),
+                emptyMap(),
+                emptyList()
         );
 
-        assertThat(modelsMenu.getItemCount()).isEqualTo(1);
-        assertThat(modelsMenu.getItem(0).getText()).isEqualTo("No providers available");
-        assertThat(modelsMenu.getItem(0).isEnabled()).isFalse();
-        assertThat(modelMenuItemsByKey).isEmpty();
-        assertThat(providerHeaderItemsByName).isEmpty();
-        assertThat(menuDataResolver.calls.get()).isZero();
+        runOnEdt(() -> {
+            JMenu modelsMenu = new JMenu("Model");
+            modelsMenu.add(new JMenuItem("stale"));
+            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
+            modelMenuItemsByKey.put("stale", new JRadioButtonMenuItem("stale"));
+            Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
+            providerHeaderItemsByName.put("stale", new JMenuItem("stale"));
+
+            subject.rebuild(
+                    modelsMenu,
+                    modelMenuItemsByKey,
+                    providerHeaderItemsByName,
+                    menuData,
+                    modelKey -> {
+                    }
+            );
+
+            assertThat(modelsMenu.getItemCount()).isEqualTo(1);
+            assertThat(modelsMenu.getItem(0).getText()).isEqualTo("No providers available");
+            assertThat(modelsMenu.getItem(0).isEnabled()).isFalse();
+            assertThat(modelMenuItemsByKey).isEmpty();
+            assertThat(providerHeaderItemsByName).isEmpty();
+        });
         assertThat(favoritesAppender.calls.get()).isZero();
         assertThat(catalogAppender.calls.get()).isZero();
     }
 
     @Test
-    @DisplayName("Rebuild resolves menu data and delegates favorites/catalog appenders when providers exist")
-    void rebuild_whenProvidersPresent_resolvesDataAndDelegatesToAppenders() throws Exception {
+    @DisplayName("Rebuild renders a resolved snapshot through favorites and catalog appenders")
+    void rebuild_whenProvidersPresent_delegatesSnapshotToAppenders() throws Exception {
         var providers = List.of(provider("OpenAI"));
         var modelsByProvider = Map.of("OpenAI", List.of("gpt-4.1"));
         var providerSelectable = Map.of("OpenAI", true);
         var favorites = List.of(new ModelSelectionCodec.ModelSelection("OpenAI", "gpt-4.1"));
-
-        var menuDataResolver = new StubProviderMenuDataResolver(
-                new ProviderMenuDataResolver.ProviderMenuData(modelsByProvider, providerSelectable, favorites)
+        var menuData = new ProviderMenuDataResolver.ProviderMenuData(
+                providers,
+                modelsByProvider,
+                providerSelectable,
+                favorites
         );
         var favoritesAppender = new StubProviderFavoritesSectionAppender();
         var catalogAppender = new StubProviderCatalogSectionAppender();
         var subject = new ProviderMenuStructureRebuilder(
-                menuDataResolver,
                 favoritesAppender,
                 catalogAppender,
                 new ProviderMenuEmptyStateFactory()
         );
 
-        JMenu modelsMenu = new JMenu("Model");
-        Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
-        Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
-
-        subject.rebuild(
-                modelsMenu,
-                modelMenuItemsByKey,
-                providerHeaderItemsByName,
-                providers,
+        runOnEdt(() -> subject.rebuild(
+                new JMenu("Model"),
+                new LinkedHashMap<>(),
+                new LinkedHashMap<>(),
+                menuData,
                 modelKey -> {
                 }
-        );
-
-        assertThat(menuDataResolver.calls.get()).isEqualTo(1);
-        assertThat(menuDataResolver.lastProviders).isEqualTo(providers);
+        ));
 
         assertThat(favoritesAppender.calls.get()).isEqualTo(1);
         assertThat(favoritesAppender.lastFavorites).isEqualTo(favorites);
         assertThat(favoritesAppender.lastProviderSelectable).isEqualTo(providerSelectable);
-
         assertThat(catalogAppender.calls.get()).isEqualTo(1);
         assertThat(catalogAppender.lastProviders).isEqualTo(providers);
         assertThat(catalogAppender.lastModelsByProvider).isEqualTo(modelsByProvider);
@@ -125,54 +118,6 @@ class ProviderMenuStructureRebuilderTest {
                 model -> null,
                 () -> emptyList()
         );
-    }
-
-    private SettingsRepository settingsRepo(String name) {
-        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(name)));
-    }
-
-    private class ThrowingProviderMenuDataResolver extends ProviderMenuDataResolver {
-
-        private final AtomicInteger calls = new AtomicInteger();
-
-        private ThrowingProviderMenuDataResolver() {
-            super(
-                    new ProviderModelsResolver(new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()))),
-                    new ProviderSelectableResolver(),
-                    new ProviderFavoritesResolver(ModelFavoritesService.createInMemory()),
-                    new ProviderAvailabilityResolver(settingsRepoQuietly())
-            );
-        }
-
-        @Override
-        public ProviderMenuData resolve(List<ProviderRegistry.ProviderDef> providers) {
-            calls.incrementAndGet();
-            throw new AssertionError("resolve should not be called when providers are empty");
-        }
-    }
-
-    private class StubProviderMenuDataResolver extends ProviderMenuDataResolver {
-
-        private final AtomicInteger calls = new AtomicInteger();
-        private final ProviderMenuData result;
-        private List<ProviderRegistry.ProviderDef> lastProviders;
-
-        private StubProviderMenuDataResolver(ProviderMenuData result) {
-            super(
-                    new ProviderModelsResolver(new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()))),
-                    new ProviderSelectableResolver(),
-                    new ProviderFavoritesResolver(ModelFavoritesService.createInMemory()),
-                    new ProviderAvailabilityResolver(settingsRepoQuietly())
-            );
-            this.result = result;
-        }
-
-        @Override
-        public ProviderMenuData resolve(List<ProviderRegistry.ProviderDef> providers) {
-            calls.incrementAndGet();
-            lastProviders = providers;
-            return result;
-        }
     }
 
     private static class StubProviderFavoritesSectionAppender extends ProviderFavoritesSectionAppender {
@@ -241,7 +186,40 @@ class ProviderMenuStructureRebuilderTest {
         }
     }
 
-    private SettingsRepository settingsRepoQuietly() {
-        return settingsRepo("provider-menu-structure-%s".formatted(System.nanoTime()));
+    private void runOnEdt(ThrowingAction action) throws Exception {
+        callOnEdt(() -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private <T> T callOnEdt(Callable<T> action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return action.call();
+        }
+        var result = new AtomicReference<T>();
+        var error = new AtomicReference<Throwable>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                result.set(action.call());
+            } catch (Throwable t) {
+                error.set(t);
+            }
+        });
+        if (error.get() instanceof Exception e) {
+            throw e;
+        }
+        if (error.get() instanceof Error e) {
+            throw e;
+        }
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return result.get();
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run() throws Exception;
     }
 }

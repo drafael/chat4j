@@ -3,8 +3,11 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import lombok.NonNull;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import static java.util.stream.Collectors.toMap;
 
 public class ProviderMenuDataResolver {
 
@@ -35,13 +38,26 @@ public class ProviderMenuDataResolver {
         List<ModelSelectionCodec.ModelSelection> favorites =
                 providerFavoritesResolver.resolveFavoriteSelections(providers, modelsByProvider);
 
-        return new ProviderMenuData(modelsByProvider, providerSelectable, favorites);
+        return new ProviderMenuData(providers, modelsByProvider, providerSelectable, favorites);
     }
 
     public record ProviderMenuData(
+            List<ProviderRegistry.ProviderDef> providers,
             Map<String, List<String>> modelsByProvider,
             Map<String, Boolean> providerSelectable,
             List<ModelSelectionCodec.ModelSelection> favorites
     ) {
+        public ProviderMenuData {
+            providers = List.copyOf(providers);
+            modelsByProvider = Map.copyOf(modelsByProvider.entrySet().stream()
+                    .collect(toMap(
+                            Map.Entry::getKey,
+                            entry -> List.copyOf(entry.getValue()),
+                            (existing, replacement) -> existing,
+                            LinkedHashMap::new
+                    )));
+            providerSelectable = Map.copyOf(providerSelectable);
+            favorites = List.copyOf(favorites);
+        }
     }
 }

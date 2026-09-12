@@ -100,6 +100,7 @@ public class ModelSelectorPopup extends JDialog {
     private final CredentialResolver credentialResolver;
     private final List<ProviderGroup> groups = new ArrayList<>();
     private final LinkedHashMap<String, ProviderEntry> entries = new LinkedHashMap<>();
+    private final Map<ModelRowKey, ModelRowComponent> visibleRowsByKey = new LinkedHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, ModelCapabilities> capabilityCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, Long> capabilityRefreshInFlight = new ConcurrentHashMap<>();
     private final Set<Thread> capabilityRefreshThreads = ConcurrentHashMap.newKeySet();
@@ -125,6 +126,7 @@ public class ModelSelectorPopup extends JDialog {
     private boolean outsideClickListenerInstalled;
     private int highlightedIndex = -1;
     private ModelRowComponent highlightedRow;
+    private boolean visibleListRebuildQueued;
 
     private enum ViewMode {
         ALL,
@@ -132,6 +134,9 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private record ProviderGroup(JLabel header, List<ModelRowComponent> rows) {
+    }
+
+    private record ModelRowKey(String providerName, String modelId) {
     }
 
     private record ModelCapabilityKey(
@@ -231,8 +236,12 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void preparePopup() {
-        boolean refreshLocalModels = preloaded && entries.containsKey(CODEX_PROVIDER_NAME);
+        boolean refreshPreparedList = preloaded;
+        boolean refreshLocalModels = refreshPreparedList && entries.containsKey(CODEX_PROVIDER_NAME);
         ensureListBuilt();
+        if (refreshPreparedList) {
+            refreshVisibleCapabilitiesAsync();
+        }
         if (refreshLocalModels) {
             refreshCodexLocalModelsAsync();
         }
@@ -338,12 +347,8 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     public void hidePopup() {
-        boolean wasVisible = isVisible();
         setVisible(false);
         uninstallOutsideClickListener();
-        if (wasVisible) {
-            invalidateModelList();
-        }
     }
 
     public void invalidateModelList() {
@@ -897,6 +902,7 @@ public class ModelSelectorPopup extends JDialog {
     private void showProviderState(String message) {
         listPanel.removeAll();
         groups.clear();
+        visibleRowsByKey.clear();
         JLabel stateLabel = new JLabel(message);
         stateLabel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         stateLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
@@ -921,6 +927,7 @@ public class ModelSelectorPopup extends JDialog {
     private void rebuildVisibleList() {
         listPanel.removeAll();
         groups.clear();
+        visibleRowsByKey.clear();
 
         entries.values().forEach(entry -> {
             List<String> models = entry.models.stream()
@@ -968,6 +975,7 @@ public class ModelSelectorPopup extends JDialog {
         models.forEach(modelId -> {
             ModelRowComponent row = createModelRow(entry, modelId, selectable);
             rows.add(row);
+            visibleRowsByKey.put(new ModelRowKey(entry.name(), modelId), row);
             row.panel().setAlignmentX(Component.LEFT_ALIGNMENT);
             listPanel.add(row.panel());
         });
@@ -1097,8 +1105,22 @@ public class ModelSelectorPopup extends JDialog {
         }
 
         if (preloaded) {
-            rebuildVisibleList();
+            queueVisibleListRebuild();
         }
+    }
+
+    private void queueVisibleListRebuild() {
+        if (visibleListRebuildQueued) {
+            return;
+        }
+
+        visibleListRebuildQueued = true;
+        SwingUtilities.invokeLater(() -> {
+            visibleListRebuildQueued = false;
+            if (preloaded && !disposed) {
+                rebuildVisibleList();
+            }
+        });
     }
 
     private void refreshCodexLocalModelsAsync() {
@@ -1240,6 +1262,15 @@ public class ModelSelectorPopup extends JDialog {
         return new ModelCapabilities(supportsImageInput, supportsReasoning, nativeWebSearchOutcome);
     }
 
+    private void refreshVisibleCapabilitiesAsync() {
+        visibleRowsByKey.keySet().forEach(key -> {
+            ProviderEntry entry = entries.get(key.providerName());
+            if (entry != null && entry.selectable) {
+                refreshCapabilitiesAsync(entry, key.modelId());
+            }
+        });
+    }
+
     private void refreshCapabilitiesAsync(ProviderEntry entry, String modelId) {
         if (StringUtils.isBlank(entry.baseUrl()) || Strings.CS.equals(entry.name(), COPILOT_PROVIDER_NAME)) {
             return;
@@ -1335,15 +1366,14 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void applyCapabilitiesToVisibleRows(ModelCapabilityKey key, ModelCapabilities capabilities) {
-        groups.forEach(group -> group.rows().forEach(row -> {
-            if (row.providerName().equals(key.providerName()) && row.modelId().equals(key.modelId())) {
-                row.updateCapabilities(
-                        capabilities.supportsImageInput(),
-                        capabilities.supportsReasoning(),
-                        capabilities.nativeWebSearchOutcome().supported()
-                );
-            }
-        }));
+        ModelRowComponent row = visibleRowsByKey.get(new ModelRowKey(key.providerName(), key.modelId()));
+        if (row != null) {
+            row.updateCapabilities(
+                    capabilities.supportsImageInput(),
+                    capabilities.supportsReasoning(),
+                    capabilities.nativeWebSearchOutcome().supported()
+            );
+        }
     }
 
 

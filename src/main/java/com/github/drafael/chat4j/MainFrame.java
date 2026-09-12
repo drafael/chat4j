@@ -87,8 +87,6 @@ import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconRenderer;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
-import com.github.drafael.chat4j.provider.support.ProviderMenuReadyCoordinator;
-import com.github.drafael.chat4j.provider.support.ProviderMenuReadyDispatchCoordinator;
 import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder;
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
@@ -283,9 +281,6 @@ public class MainFrame extends JFrame {
     private final ProviderMenuAvailabilityApplier providerMenuAvailabilityApplier = new ProviderMenuAvailabilityApplier();
     private final ProviderMenuAvailabilityRefreshCoordinator providerMenuAvailabilityRefreshCoordinator;
     private final ProviderMenuAvailabilityRefreshDispatchCoordinator providerMenuAvailabilityRefreshDispatchCoordinator;
-    private final ProviderMenuReadyCoordinator providerMenuReadyCoordinator = new ProviderMenuReadyCoordinator();
-    private final ProviderMenuReadyDispatchCoordinator providerMenuReadyDispatchCoordinator =
-            new ProviderMenuReadyDispatchCoordinator(providerMenuReadyCoordinator);
     private final ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory = new ProviderMenuEmptyStateFactory();
     private final ProviderMenuIconTintResolver providerMenuIconTintResolver = new ProviderMenuIconTintResolver();
     private final ProviderMenuIconResolver providerMenuIconResolver =
@@ -558,7 +553,7 @@ public class MainFrame extends JFrame {
         this.modelMenuDirtyRefreshCoordinator = lifecycleWiring.modelMenuDirtyRefreshCoordinator();
         this.modelMenuDirtyRefreshTriggerCoordinator = lifecycleWiring.modelMenuDirtyRefreshTriggerCoordinator();
         this.modelMenuCoordinator = new MainFrameModelMenuCoordinator(
-                providerMenuReadyDispatchCoordinator,
+                providerMenuDataResolver,
                 modelMenuStructureRebuildCoordinator,
                 modelMenuStructureRebuildApplyCoordinator,
                 modelMenuSelectionDispatchCoordinator,
@@ -1666,6 +1661,7 @@ public class MainFrame extends JFrame {
             branches.add(cleanupAction(() -> UIManager.removePropertyChangeListener(lookAndFeelListener)));
             branches.add(cleanupAction(() -> providerRegistry.setAuthStatusRefreshListener(() -> {
             })));
+            branches.add(cleanupAction(modelMenuCoordinator::dispose));
             if (chatPanel != null) {
                 branches.add(cleanupStage(chatPanel::cancelAllRequestsAsync));
             }
@@ -2811,7 +2807,12 @@ public class MainFrame extends JFrame {
     }
 
     private void markModelsMenuDirty() {
-        modelMenuCoordinator.markDirty(modelMenuContext());
+        Runnable refresh = () -> modelMenuCoordinator.requestRefresh(modelMenuContext());
+        if (SwingUtilities.isEventDispatchThread()) {
+            refresh.run();
+        } else {
+            SwingUtilities.invokeLater(refresh);
+        }
     }
 
     private void onLookAndFeelChanged() {

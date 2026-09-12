@@ -14,19 +14,28 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.JDialog;
+import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.GraphicsEnvironment;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ModelSelectorPopupEdtTest {
@@ -125,6 +134,183 @@ class ModelSelectorPopupEdtTest {
             runOnEdt(() -> { });
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Reopening a prepared popup refreshes capability data for retained rows")
+    void showCentered_whenPreparedListIsReopened_refreshesRetainedRowCapabilities() throws Exception {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for model selector behavior.");
+
+        var provider = new ProviderDef(
+                "Custom",
+                "CUSTOM_API_KEY",
+                "http://localhost",
+                "https://default.invalid",
+                List.of("embedding-test"),
+                ProviderCapabilities.chatModelsAndImages(),
+                model -> null,
+                List::of
+        );
+        ProviderRegistry providerRegistry = mock(ProviderRegistry.class);
+        when(providerRegistry.availableProviders()).thenReturn(List.of(provider));
+        CredentialResolver credentialResolver = mock(CredentialResolver.class);
+        var credentialResolutions = new AtomicInteger();
+        var firstRefreshStarted = new CountDownLatch(1);
+        var secondRefreshStarted = new CountDownLatch(1);
+        var firstRefreshThread = new AtomicReference<Thread>();
+        var secondRefreshThread = new AtomicReference<Thread>();
+        when(credentialResolver.resolveApiKey(provider.envVar(), null)).thenAnswer(invocation -> {
+            int resolution = credentialResolutions.incrementAndGet();
+            if (resolution == 1) {
+                firstRefreshThread.set(Thread.currentThread());
+                firstRefreshStarted.countDown();
+            } else if (resolution == 2) {
+                secondRefreshThread.set(Thread.currentThread());
+                secondRefreshStarted.countDown();
+            }
+            return "test-key";
+        });
+        var modelCacheService = new ProviderModelCacheService(
+                new ProviderModelCache(StoragePaths.ofConfigHome(tempDir))
+        );
+        modelCacheService.synchronizeScope(
+                provider.name(),
+                provider.baseUrl(),
+                modelCacheService.nextScopeVersion()
+        );
+        ProviderModelCacheService.RefreshAttempt refreshAttempt = modelCacheService.tryBeginRefreshIfNeeded(
+                provider.name(),
+                provider.baseUrl(),
+                Duration.ZERO
+        ).orElseThrow();
+        assertThat(modelCacheService.update(refreshAttempt, provider.seedModels())).isTrue();
+        var owner = new AtomicReference<JDialog>();
+        var popup = new AtomicReference<ModelSelectorPopup>();
+
+        try {
+            runOnEdt(() -> {
+                owner.set(new JDialog());
+                popup.set(new ModelSelectorPopup(
+                        owner.get(),
+                        modelCacheService,
+                        ModelFavoritesService.createInMemory(),
+                        providerRegistry,
+                        (providerName, modelId) -> {
+                        },
+                        (providers, scopeVersion) -> true,
+                        () -> {
+                        },
+                        () -> {
+                        },
+                        credentialResolver
+                ));
+                popup.get().preload();
+            });
+            assertThat(firstRefreshStarted.await(3, TimeUnit.SECONDS)).isTrue();
+            firstRefreshThread.get().join(TimeUnit.SECONDS.toMillis(3));
+            assertThat(firstRefreshThread.get().isAlive()).isFalse();
+            runOnEdt(() -> {
+            });
+
+            runOnEdt(() -> popup.get().showCentered(null, null));
+
+            assertThat(secondRefreshStarted.await(3, TimeUnit.SECONDS)).isTrue();
+            secondRefreshThread.get().join(TimeUnit.SECONDS.toMillis(3));
+            assertThat(secondRefreshThread.get().isAlive()).isFalse();
+        } finally {
+            runOnEdt(() -> {
+                if (popup.get() != null) {
+                    popup.get().dispose();
+                }
+                if (owner.get() != null) {
+                    owner.get().dispose();
+                }
+            });
+            runOnEdt(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Hiding and reopening the popup retains the prepared model list")
+    void hidePopup_whenReopened_reusesPreparedModelList() throws Exception {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for model selector behavior.");
+
+        var provider = new ProviderDef(
+                "Perplexity",
+                "PERPLEXITY_API_KEY",
+                "",
+                "",
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                model -> null,
+                List::of
+        );
+        ProviderRegistry providerRegistry = mock(ProviderRegistry.class);
+        when(providerRegistry.availableProviders()).thenReturn(List.of(provider));
+        var providersLoaded = new CountDownLatch(1);
+        var owner = new AtomicReference<JDialog>();
+        var popup = new AtomicReference<ModelSelectorPopup>();
+
+        try {
+            runOnEdt(() -> {
+                owner.set(new JDialog());
+                popup.set(new ModelSelectorPopup(
+                        owner.get(),
+                        new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(tempDir))),
+                        ModelFavoritesService.createInMemory(),
+                        providerRegistry,
+                        (providerName, modelId) -> {
+                        },
+                        (providers, scopeVersion) -> {
+                            providersLoaded.countDown();
+                            return true;
+                        },
+                        () -> {
+                        },
+                        () -> {
+                        },
+                        mock(CredentialResolver.class)
+                ));
+                popup.get().showCentered(null, null);
+            });
+            assertThat(providersLoaded.await(3, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {
+            });
+
+            runOnEdt(() -> {
+                popup.get().hidePopup();
+                popup.get().showCentered(null, null);
+                assertThat(componentTexts(popup.get().getContentPane()))
+                        .anyMatch(text -> text.startsWith("sonar"))
+                        .doesNotContain("Loading models...");
+            });
+            verify(providerRegistry).availableProviders();
+        } finally {
+            runOnEdt(() -> {
+                if (popup.get() != null) {
+                    popup.get().dispose();
+                }
+                if (owner.get() != null) {
+                    owner.get().dispose();
+                }
+            });
+            runOnEdt(() -> {
+            });
+        }
+    }
+
+    private List<String> componentTexts(Component component) {
+        List<String> ownText = component instanceof JLabel label && label.getText() != null
+                ? List.of(label.getText())
+                : emptyList();
+        if (!(component instanceof Container container)) {
+            return ownText;
+        }
+        return Stream.concat(
+                ownText.stream(),
+                Arrays.stream(container.getComponents()).flatMap(child -> componentTexts(child).stream())
+        ).toList();
     }
 
     private void runOnEdt(ThrowingAction action) throws Exception {

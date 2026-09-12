@@ -52,6 +52,7 @@ class ProviderMenuDataResolverTest {
         assertThat(favoritesResolver.lastProviders).isEqualTo(providers);
         assertThat(favoritesResolver.lastModelsByProvider).isEqualTo(modelsByProvider);
 
+        assertThat(menuData.providers()).isEqualTo(providers);
         assertThat(menuData.modelsByProvider()).isEqualTo(modelsByProvider);
         assertThat(menuData.providerSelectable()).containsEntry("OpenAI", true).containsEntry("Ollama", false);
         assertThat(menuData.favorites())
