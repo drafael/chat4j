@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.persistence;
 
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
@@ -15,13 +16,39 @@ public final class StoragePaths {
     private static final String WINDOWS_APPDATA_ENV = "APPDATA";
 
     private final Path configHome;
+    private final Path dataHome;
+    private final Path cacheHome;
+    private final Path stateHome;
+    private final Path legacyOAuthConfigHome;
 
-    private StoragePaths(Path configHome) {
+    private StoragePaths(
+            Path configHome,
+            Path dataHome,
+            Path cacheHome,
+            Path stateHome,
+            Path legacyOAuthConfigHome
+    ) {
         this.configHome = configHome;
+        this.dataHome = dataHome;
+        this.cacheHome = cacheHome;
+        this.stateHome = stateHome;
+        this.legacyOAuthConfigHome = legacyOAuthConfigHome;
     }
 
-    public static StoragePaths ofConfigHome(@NonNull Path configHome) {
-        return new StoragePaths(configHome);
+    /**
+     * Creates an isolated layout with one base home. Retained for compatibility with embedded and test callers.
+     */
+    public static StoragePaths ofConfigHome(@NonNull Path baseHome) {
+        return ofBaseHomes(baseHome, baseHome, baseHome, baseHome);
+    }
+
+    public static StoragePaths ofBaseHomes(
+            @NonNull Path configHome,
+            @NonNull Path dataHome,
+            @NonNull Path cacheHome,
+            @NonNull Path stateHome
+    ) {
+        return new StoragePaths(configHome, dataHome, cacheHome, stateHome, configHome);
     }
 
     public static StoragePaths defaultPaths() {
@@ -29,6 +56,9 @@ public final class StoragePaths {
                 SystemUtils.IS_OS_WINDOWS,
                 System.getProperty("user.home"),
                 System.getenv("XDG_CONFIG_HOME"),
+                System.getenv("XDG_DATA_HOME"),
+                System.getenv("XDG_CACHE_HOME"),
+                System.getenv("XDG_STATE_HOME"),
                 System.getenv(WINDOWS_APPDATA_ENV)
         );
     }
@@ -39,24 +69,52 @@ public final class StoragePaths {
             String xdgConfigHome,
             String windowsAppData
     ) {
+        return defaultPaths(windows, userHome, xdgConfigHome, null, null, null, windowsAppData);
+    }
+
+    static StoragePaths defaultPaths(
+            boolean windows,
+            String userHome,
+            String xdgConfigHome,
+            String xdgDataHome,
+            String xdgCacheHome,
+            String xdgStateHome,
+            String windowsAppData
+    ) {
         if (windows) {
-            Path windowsConfigHome = StringUtils.isNotBlank(windowsAppData)
+            Path windowsHome = StringUtils.isNotBlank(windowsAppData)
                     ? Path.of(windowsAppData)
                     : requiredHomePath(userHome, "AppData", "Roaming");
-            return new StoragePaths(windowsConfigHome);
+            return new StoragePaths(windowsHome, windowsHome, windowsHome, windowsHome, windowsHome);
         }
-        Path configHome = StringUtils.isNotBlank(xdgConfigHome)
-                ? Path.of(xdgConfigHome)
-                : requiredHomePath(userHome, ".config");
-        return new StoragePaths(configHome);
+
+        Path fallbackConfigHome = requiredHomePath(userHome, ".config");
+        Path legacyOAuthConfigHome = xdgHome(xdgConfigHome, fallbackConfigHome);
+        Path configHome = xdgHome(xdgConfigHome, fallbackConfigHome);
+        Path dataHome = xdgHome(xdgDataHome, requiredHomePath(userHome, ".local", "share"));
+        Path cacheHome = xdgHome(xdgCacheHome, requiredHomePath(userHome, ".cache"));
+        Path stateHome = xdgHome(xdgStateHome, requiredHomePath(userHome, ".local", "state"));
+        return new StoragePaths(configHome, dataHome, cacheHome, stateHome, legacyOAuthConfigHome);
     }
 
     public Path appConfigDirectory() {
         return configHome.resolve(APP_NAME);
     }
 
+    public Path appDataDirectory() {
+        return dataHome.resolve(APP_NAME);
+    }
+
+    public Path appCacheDirectory() {
+        return cacheHome.resolve(APP_NAME);
+    }
+
+    public Path appStateDirectory() {
+        return stateHome.resolve(APP_NAME);
+    }
+
     public Path databaseDirectory() {
-        return appConfigDirectory().resolve("data");
+        return appDataDirectory().resolve("data");
     }
 
     public Path databaseFilePrefix() {
@@ -96,18 +154,11 @@ public final class StoragePaths {
     }
 
     public Path attachmentsDirectory() {
-        return appConfigDirectory().resolve("attachments");
-    }
-
-    private static Path requiredHomePath(String userHome, String... children) {
-        if (StringUtils.isBlank(userHome)) {
-            throw new IllegalStateException("No durable configuration home is available");
-        }
-        return Path.of(userHome, children);
+        return appDataDirectory().resolve("attachments");
     }
 
     public Path jcefBundleDirectory() {
-        return appConfigDirectory().resolve("jcef-bundle");
+        return appCacheDirectory().resolve("jcef-bundle");
     }
 
     public Path settingsFile() {
@@ -115,7 +166,7 @@ public final class StoragePaths {
     }
 
     public Path promptsFile() {
-        return appConfigDirectory().resolve("prompts.json");
+        return appDataDirectory().resolve("prompts.json");
     }
 
     public Path mcpFile() {
@@ -123,7 +174,7 @@ public final class StoragePaths {
     }
 
     public Path secretsDirectory() {
-        return appConfigDirectory().resolve("secrets");
+        return appDataDirectory().resolve("secrets");
     }
 
     public Path tokenVaultFile() {
@@ -138,11 +189,27 @@ public final class StoragePaths {
         return secretsDirectory().resolve("token-vault.lock");
     }
 
+    public Path copilotAuthFile() {
+        return secretsDirectory().resolve("copilot-auth.json");
+    }
+
+    public Path codexAuthFile() {
+        return secretsDirectory().resolve("codex-auth.json");
+    }
+
+    public Path databaseCredentialsFile() {
+        return secretsDirectory().resolve("db.credentials");
+    }
+
     /**
      * The single cache root used by normal runtime cache consumers.
      */
     public Path cacheDirectory() {
-        return appConfigDirectory().resolve("cache");
+        return appCacheDirectory().resolve("cache");
+    }
+
+    public Path catalogMetadataFile() {
+        return appCacheDirectory().resolve("catalog-index.properties");
     }
 
     /**
@@ -153,11 +220,67 @@ public final class StoragePaths {
     }
 
     public Path sttModelsDirectory() {
-        return appConfigDirectory().resolve("stt").resolve("models");
+        return appDataDirectory().resolve("stt").resolve("models");
     }
 
     public Path sttTempDirectory() {
+        return appCacheDirectory().resolve("stt").resolve("temp");
+    }
+
+    public Path logsDirectory() {
+        return appStateDirectory().resolve("logs");
+    }
+
+    public Path windowStateFile() {
+        return appStateDirectory().resolve("window.properties");
+    }
+
+    Path legacyDatabaseDirectory() {
+        return appConfigDirectory().resolve("data");
+    }
+
+    Path legacyAttachmentsDirectory() {
+        return appConfigDirectory().resolve("attachments");
+    }
+
+    Path legacyJcefBundleDirectory() {
+        return appConfigDirectory().resolve("jcef-bundle");
+    }
+
+    Path legacyPromptsFile() {
+        return appConfigDirectory().resolve("prompts.json");
+    }
+
+    Path legacySecretsDirectory() {
+        return appConfigDirectory().resolve("secrets");
+    }
+
+    Path legacyDatabaseCredentialsFile() {
+        return appConfigDirectory().resolve("db.credentials");
+    }
+
+    Path legacyCacheDirectory() {
+        return appConfigDirectory().resolve("cache");
+    }
+
+    Path legacySttModelsDirectory() {
+        return appConfigDirectory().resolve("stt").resolve("models");
+    }
+
+    Path legacySttTempDirectory() {
         return appConfigDirectory().resolve("stt").resolve("temp");
+    }
+
+    Path legacyLogsDirectory() {
+        return appConfigDirectory().resolve("logs");
+    }
+
+    Path legacyCopilotAuthFile() {
+        return legacyOAuthConfigHome.resolve(APP_NAME).resolve("copilot-auth.json");
+    }
+
+    Path legacyCodexAuthFile() {
+        return legacyOAuthConfigHome.resolve(APP_NAME).resolve("codex-auth.json");
     }
 
     public String jdbcUrl() {
@@ -172,5 +295,24 @@ public final class StoragePaths {
     public String sqliteJdbcUrl(boolean migrating) {
         Path databaseFile = migrating ? sqliteMigratingDatabaseFile() : sqliteDatabaseFile();
         return "jdbc:sqlite:%s".formatted(databaseFile.toAbsolutePath());
+    }
+
+    private static Path xdgHome(String configured, Path fallback) {
+        if (StringUtils.isBlank(configured)) {
+            return fallback;
+        }
+        try {
+            Path path = Path.of(configured);
+            return path.isAbsolute() ? path : fallback;
+        } catch (InvalidPathException e) {
+            return fallback;
+        }
+    }
+
+    private static Path requiredHomePath(String userHome, String... children) {
+        if (StringUtils.isBlank(userHome)) {
+            throw new IllegalStateException("No durable storage home is available");
+        }
+        return Path.of(userHome, children);
     }
 }

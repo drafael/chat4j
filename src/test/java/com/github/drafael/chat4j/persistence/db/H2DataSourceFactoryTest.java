@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.persistence.db;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
-import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,7 +31,7 @@ class H2DataSourceFactoryTest {
             statement.execute();
         }
 
-        Path credentialsFile = storagePaths.appConfigDirectory().resolve("db.credentials");
+        Path credentialsFile = storagePaths.databaseCredentialsFile();
         assertThat(credentialsFile).exists();
 
         String credentialsContent = Files.readString(credentialsFile, StandardCharsets.UTF_8);
@@ -77,10 +76,13 @@ class H2DataSourceFactoryTest {
                 .isInstanceOf(Exception.class);
     }
 
-    private StoragePaths createStoragePaths(Path configHome) throws Exception {
-        Constructor<StoragePaths> constructor = StoragePaths.class.getDeclaredConstructor(Path.class);
-        constructor.setAccessible(true);
-        return constructor.newInstance(configHome);
+    private StoragePaths createStoragePaths(Path root) {
+        return StoragePaths.ofBaseHomes(
+                root.resolve("config"),
+                root.resolve("data"),
+                root.resolve("cache"),
+                root.resolve("state")
+        );
     }
 
     private String extractPassword(String credentialsContent) {

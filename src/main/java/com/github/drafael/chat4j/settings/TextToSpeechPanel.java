@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
@@ -66,6 +67,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
 
     public TextToSpeechPanel(
             SettingsRepository settingsRepo,
+            CatalogSnapshotStore catalogSnapshots,
             CredentialResolver credentialResolver,
             CredentialMutationService credentialMutationService,
             Map<String, String> subprocessEnvironment,
@@ -79,7 +81,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
                 credentialMutationService,
                 tokenFieldRegistry,
                 credentialChangeListener,
-                true
+                true,
+                catalogSnapshots
         );
     }
 
@@ -92,10 +95,32 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
             SettingsCredentialChangeListener credentialChangeListener,
             boolean automaticCatalogRefresh
     ) {
+        this(
+                settingsRepo,
+                providerRegistry,
+                credentialResolver,
+                credentialMutationService,
+                tokenFieldRegistry,
+                credentialChangeListener,
+                automaticCatalogRefresh,
+                CatalogSnapshotStore.forSettings(settingsRepo)
+        );
+    }
+
+    private TextToSpeechPanel(
+            SettingsRepository settingsRepo,
+            TextToSpeechProviderRegistry providerRegistry,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener,
+            boolean automaticCatalogRefresh,
+            CatalogSnapshotStore catalogSnapshots
+    ) {
         super(settingsRepo);
         this.providerRegistry = providerRegistry;
         this.textToSpeechSettings = new TextToSpeechSettings(settingsRepo, providerRegistry);
-        this.catalogStore = new TextToSpeechCatalogStore(settingsRepo);
+        this.catalogStore = new TextToSpeechCatalogStore(catalogSnapshots);
         this.tokenFieldRegistry = tokenFieldRegistry;
         this.credentialResolver = credentialResolver;
         this.credentialMutationService = credentialMutationService;

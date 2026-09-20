@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
@@ -132,6 +133,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
 
     SpeechToTextPanel(
             SettingsRepository settingsRepo,
+            CatalogSnapshotStore catalogSnapshots,
             Path defaultModelDirectory,
             VoskModelManagementService voskModelManagementService,
             WhisperModelManagementService whisperModelManagementService,
@@ -151,7 +153,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 credentialResolver,
                 credentialMutationService,
                 tokenFieldRegistry,
-                credentialChangeListener
+                credentialChangeListener,
+                catalogSnapshots
         );
     }
 
@@ -166,6 +169,34 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             CredentialMutationService credentialMutationService,
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
+    ) {
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                providerRegistry,
+                modelDownloader,
+                voskModelManagementService,
+                whisperModelManagementService,
+                credentialResolver,
+                credentialMutationService,
+                tokenFieldRegistry,
+                credentialChangeListener,
+                CatalogSnapshotStore.forSettings(settingsRepo)
+        );
+    }
+
+    private SpeechToTextPanel(
+            SettingsRepository settingsRepo,
+            Path defaultModelDirectory,
+            SpeechToTextProviderRegistry providerRegistry,
+            SpeechToTextModelDownloader modelDownloader,
+            VoskModelManagementService voskModelManagementService,
+            WhisperModelManagementService whisperModelManagementService,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener,
+            CatalogSnapshotStore catalogSnapshots
     ) {
         super(settingsRepo);
         this.providerRegistry = providerRegistry;
@@ -186,7 +217,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 voskModelManagementService,
                 whisperModelManagementService
         );
-        this.catalogStore = new SpeechToTextCatalogStore(settingsRepo);
+        this.catalogStore = new SpeechToTextCatalogStore(catalogSnapshots);
         this.modelDownloader = modelDownloader;
         buildUi();
         subscribeModelListeners();

@@ -2,6 +2,8 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Rectangle;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import lombok.NonNull;
 
@@ -16,11 +18,44 @@ public final class WindowStateSettings {
     private static final String WINDOW_SCREEN_WIDTH_KEY = "chat4j.ui.window.screen.width";
     private static final String WINDOW_SCREEN_HEIGHT_KEY = "chat4j.ui.window.screen.height";
     private static final String WINDOW_SCREEN_ID_KEY = "chat4j.ui.window.screen.id";
+    private static final List<String> WINDOW_KEYS = List.of(
+            WINDOW_X_KEY,
+            WINDOW_Y_KEY,
+            WINDOW_WIDTH_KEY,
+            WINDOW_HEIGHT_KEY,
+            WINDOW_SCREEN_X_KEY,
+            WINDOW_SCREEN_Y_KEY,
+            WINDOW_SCREEN_WIDTH_KEY,
+            WINDOW_SCREEN_HEIGHT_KEY,
+            WINDOW_SCREEN_ID_KEY
+    );
 
     private final SettingsRepository settingsRepo;
 
     public WindowStateSettings(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
+    }
+
+    public static void migrateLegacyState(
+            @NonNull SettingsRepository configuration,
+            @NonNull SettingsRepository state
+    ) {
+        Map<String, String> legacy = configuration.getAll(WINDOW_KEYS);
+        if (legacy.isEmpty()) {
+            return;
+        }
+
+        Map<String, String> existing = state.getAll(WINDOW_KEYS);
+        state.updateBatch(batch -> legacy.forEach((key, value) -> {
+            if (!existing.containsKey(key)) {
+                batch.put(key, value);
+            }
+        }));
+        Map<String, String> migrated = state.getAll(WINDOW_KEYS);
+        boolean complete = legacy.keySet().stream().allMatch(migrated::containsKey);
+        if (complete) {
+            configuration.updateBatch(batch -> WINDOW_KEYS.forEach(batch::remove));
+        }
     }
 
     public void save(@NonNull WindowPlacementSnapshot snapshot) {

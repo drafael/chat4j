@@ -36,6 +36,45 @@ class CatalogSnapshotStoreTest {
     Path tempDir;
 
     @Test
+    @DisplayName("Legacy catalog pointers move into cache metadata without moving user selections")
+    void importLegacyMetadata_whenCatalogMetadataExists_movesOnlyCacheOwnedKeys() {
+        var settings = new SettingsRepository(tempDir.resolve("settings.properties"));
+        var metadata = new SettingsRepository(tempDir.resolve("catalog-index.properties"));
+        settings.put("chat4j.stt.catalog.deepgram.modelsFile", "stt-deepgram-models-11111111111111111111111111111111.json");
+        settings.put("chat4j.stt.catalog.deepgram.updatedAt", "2026-09-20T00:00:00Z");
+        settings.put("chat4j.stt.deepgram.model.id", "nova-3");
+
+        CatalogSnapshotStore.importLegacyMetadata(settings, metadata);
+
+        assertThat(settings.get("chat4j.stt.catalog.deepgram.modelsFile")).isEmpty();
+        assertThat(settings.get("chat4j.stt.catalog.deepgram.updatedAt")).isEmpty();
+        assertThat(metadata.get("chat4j.stt.catalog.deepgram.modelsFile"))
+                .contains("stt-deepgram-models-11111111111111111111111111111111.json");
+        assertThat(metadata.get("chat4j.stt.catalog.deepgram.updatedAt")).contains("2026-09-20T00:00:00Z");
+        assertThat(settings.get("chat4j.stt.deepgram.model.id")).contains("nova-3");
+    }
+
+    @Test
+    @DisplayName("Catalog invalidation clears cache metadata and application selection settings")
+    void invalidate_whenMetadataIsSeparate_clearsBothOwnedRepositories() {
+        var settings = new SettingsRepository(tempDir.resolve("settings.properties"));
+        var metadata = new SettingsRepository(tempDir.resolve("catalog-index.properties"));
+        var root = CacheRootHandle.of(tempDir.resolve("cache"));
+        var subject = new CatalogSnapshotStore(root, metadata, settings, Clock.systemUTC(), UUID::randomUUID);
+        var group = SpeechCatalogKeySchema.sttModels("deepgram");
+        metadata.put(group.slots().getFirst().referenceKey(), "stt-deepgram-models-11111111111111111111111111111111.json");
+        metadata.put(group.updatedAtKey(), "2026-09-20T00:00:00Z");
+        settings.put("chat4j.stt.deepgram.model.id", "nova-3");
+
+        boolean invalidated = subject.invalidate(group, List.of("chat4j.stt.deepgram.model.id"));
+
+        assertThat(invalidated).isTrue();
+        assertThat(metadata.get(group.slots().getFirst().referenceKey())).isEmpty();
+        assertThat(metadata.get(group.updatedAtKey())).isEmpty();
+        assertThat(settings.get("chat4j.stt.deepgram.model.id")).isEmpty();
+    }
+
+    @Test
     @DisplayName("TTS publication commits correlated immutable references with distinct compact UUIDs")
     void save_whenTtsPayloadsAreValid_publishesBothReferences() {
         var settings = new SettingsRepository(tempDir.resolve("settings.properties"));

@@ -80,7 +80,7 @@ public class MainFrameDependenciesFactory {
                 context.themeMenuSelectionApplyCoordinator()
         );
         var lifecycleWiring = lifecycleWiringFactory.create(
-                context.settingsRepo(),
+                context.windowStateRepo(),
                 context.menuPopupVisibleRunner()
         );
         var conversationWiring = conversationWiringFactory.create(context.conversationRepo());
@@ -96,6 +96,7 @@ public class MainFrameDependenciesFactory {
     public record DependenciesContext(
             @NonNull ConversationRepository conversationRepo,
             @NonNull SettingsRepository settingsRepo,
+            @NonNull SettingsRepository windowStateRepo,
             @NonNull ProviderRegistry providerRegistry,
             @NonNull ProviderModelCacheService modelCacheService,
             @NonNull ModelFavoritesService modelFavoritesService,

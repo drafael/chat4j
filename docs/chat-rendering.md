@@ -193,7 +193,7 @@ Runtime behavior:
 - Transcript updates wait for main-frame load completion before touching the DOM, which avoids stale updates during streaming and conversation switches.
 - In-browser navigation is blocked; safe links open externally through `ExternalLinkSupport`.
 - DevTools/remote debugging is opt-in with `-Dchat4j.jcef.devtools=true`.
-- Native runtime files are extracted through `me.friwi:jcefmaven` into `<app-config>/jcef-bundle` by default, or `-Dchat4j.jcef.installDir=...`.
+- Native runtime files are extracted through `me.friwi:jcefmaven` into `<app-cache>/jcef-bundle` by default (`${XDG_CACHE_HOME:-$HOME/.cache}/chat4j/jcef-bundle` on non-Windows systems), or `-Dchat4j.jcef.installDir=...`.
 
 Known risks from the spike and local testing:
 

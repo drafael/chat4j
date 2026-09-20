@@ -67,6 +67,7 @@ class MainFrameDependenciesFactoryTest {
         assertThatThrownBy(() -> new MainFrameDependenciesFactory.DependenciesContext(
                 new ConversationRepository(null),
                 null,
+                new SettingsRepository(tempDir.resolve("window-state.properties")),
                 mock(ProviderRegistry.class),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
@@ -108,6 +109,7 @@ class MainFrameDependenciesFactoryTest {
         return new MainFrameDependenciesFactory.DependenciesContext(
                 new ConversationRepository(null),
                 new SettingsRepository(tempDir.resolve("settings.properties")),
+                new SettingsRepository(tempDir.resolve("window-state.properties")),
                 mock(ProviderRegistry.class),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),

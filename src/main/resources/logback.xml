@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <property name="LOG_DIR" value="${chat4j.log.dir:-${user.home}/.config/chat4j/logs}"/>
+    <property name="LOG_DIR" value="${chat4j.log.dir:-${user.home}/.local/state/chat4j/logs}"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>

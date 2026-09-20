@@ -268,6 +268,7 @@ public class MainFrame extends JFrame {
     private final WhisperNativeRuntime whisperNativeRuntime;
     private final TextToSpeechService textToSpeechService;
     private final SpeechToTextService speechToTextService;
+    private final CatalogSnapshotStore catalogSnapshots;
     private final SpeechToTextCatalogStore sttCatalogStore;
     private final TextToSpeechCatalogStore ttsCatalogStore;
     private final ProviderSettingsApplyCoordinator providerSettingsApplyCoordinator;
@@ -447,6 +448,7 @@ public class MainFrame extends JFrame {
         this.storagePaths = storagePaths;
         this.sttModelsDirectory = storagePaths.sttModelsDirectory();
         this.sttTempDirectory = storagePaths.sttTempDirectory();
+        this.catalogSnapshots = catalogSnapshots;
         this.sttCatalogStore = new SpeechToTextCatalogStore(catalogSnapshots);
         this.ttsCatalogStore = new TextToSpeechCatalogStore(catalogSnapshots);
         this.chatWebViewRuntimeStatus = new WebViewRuntimeStatusResolver(settingsRepo).resolve();
@@ -475,6 +477,7 @@ public class MainFrame extends JFrame {
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
                 conversationRepo,
                 settingsRepo,
+                new SettingsRepository(storagePaths.windowStateFile()),
                 providerRegistry,
                 modelCacheService,
                 modelFavoritesService,
@@ -2353,6 +2356,7 @@ public class MainFrame extends JFrame {
                         this,
                         settingsRepo,
                         promptCatalogRepo,
+                        catalogSnapshots,
                         chatWebViewRuntimeStatus,
                         this::requestWindowClose,
                         this::beginApplicationExit,

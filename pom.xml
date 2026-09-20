@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.9.7</version>
+    <version>26.9.8</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -458,6 +458,9 @@
                     </systemPropertyVariables>
                     <environmentVariables>
                         <XDG_CONFIG_HOME>${project.build.directory}/test-xdg-config</XDG_CONFIG_HOME>
+                        <XDG_DATA_HOME>${project.build.directory}/test-xdg-data</XDG_DATA_HOME>
+                        <XDG_CACHE_HOME>${project.build.directory}/test-xdg-cache</XDG_CACHE_HOME>
+                        <XDG_STATE_HOME>${project.build.directory}/test-xdg-state</XDG_STATE_HOME>
                     </environmentVariables>
                 </configuration>
             </plugin>

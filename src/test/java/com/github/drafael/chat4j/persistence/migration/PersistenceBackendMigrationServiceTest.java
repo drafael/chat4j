@@ -495,6 +495,9 @@ class PersistenceBackendMigrationServiceTest {
             return;
         }
         deleteRecursively(storagePaths.appConfigDirectory());
+        deleteRecursively(storagePaths.appDataDirectory());
+        deleteRecursively(storagePaths.appCacheDirectory());
+        deleteRecursively(storagePaths.appStateDirectory());
     }
 
     private void deleteRecursively(Path path) throws IOException {

@@ -10,12 +10,13 @@ Startup order:
 
 1. Configure platform integration before Swing/AWT use.
 2. Configure early FlatLaf look and feel.
-3. Run `EnvironmentBootstrapper.initialize()`.
-4. Resolve chat storage backend, run pending storage migration if needed, initialize data source, Flyway, and repositories.
-5. Apply saved appearance.
-6. Initialize JCEF with a modal progress dialog when the configured/fallback web-view path may need Chromium.
-7. Create and show `MainFrame` on the EDT.
-8. Show non-blocking environment warning if needed.
+3. Migrate the legacy config-only storage layout into scoped homes.
+4. Start `EnvironmentBootstrapper.initialize()` asynchronously.
+5. Resolve the chat storage backend, run any pending backend migration, and initialize the data source, Flyway, and repositories.
+6. Apply saved appearance.
+7. Initialize JCEF with a modal progress dialog when the configured/fallback web-view path may need Chromium.
+8. Create and show `MainFrame` on the EDT.
+9. Show the non-blocking environment warning if needed.
 
 Key classes:
 
@@ -31,12 +32,12 @@ Add future startup concerns as explicit named steps in `ApplicationBootstrap.sta
 
 Chat persistence supports SQLite and H2. SQLite is the default backend. The active backend is stored in `chat.storage.backend.active`; a Settings UI change writes `chat.storage.backend.pending` and takes effect the next time Chat4J starts.
 
-Files live under the app config directory:
+Database files and credentials live under the app data directory:
 
 ```text
-<app-config>/data/chat4j.mv.db      # H2
-<app-config>/data/chat4j.sqlite3    # SQLite
-<app-config>/db.credentials         # H2 credentials
+<app-data>/data/chat4j.mv.db              # H2
+<app-data>/data/chat4j.sqlite3             # SQLite
+<app-data>/secrets/db.credentials          # H2 credentials
 ```
 
 Startup migrates `active -> pending` before `MainFrame` is created, using backend-specific Flyway migrations in `db/migration/h2` and `db/migration/sqlite`. Existing unconfigured H2 storage is migrated to SQLite on first startup with the SQLite default. Migration copies logical chat rows into staged target files, verifies table counts, promotes the staged database, and keeps existing target files in `data/backups/`.
@@ -125,6 +126,10 @@ java --enable-preview \
 
 The runner lists available Anthropic models first, auto-selects an available Claude 4 model when no override is supplied, and exercises model listing, text streaming, system prompts, reasoning tokens, web search, image input, and cancellation cleanup. Web-search responses also cover the citation streaming path when Anthropic returns citation deltas. Override models with `chat4j.smoke.anthropic.model`, `chat4j.smoke.anthropic.reasoningModel`, `chat4j.smoke.anthropic.visionModel`, and `chat4j.smoke.anthropic.webSearchModel`.
 
+## Storage layout
+
+See [Storage layout](storage-layout.md) for XDG roots, file ownership, Windows behavior, and migration rules.
+
 ## Logging
 
 Stack:
@@ -147,8 +152,8 @@ Destinations:
 
 - Console when launched from terminal.
 - Rotating file: `${chat4j.log.dir}/chat4j.log`.
-- Default log dir: `<app-config>/logs`, where `<app-config>` is the Chat4J app config directory: `%APPDATA%/chat4j` on Windows when `%APPDATA%` is set, otherwise `%USERPROFILE%/AppData/Roaming/chat4j`; on non-Windows it is `$XDG_CONFIG_HOME/chat4j` when set, otherwise `~/.config/chat4j`.
-- Emergency bootstrap fallback if normal path resolution fails: `~/.config/chat4j/logs/bootstrap-fallback.log`.
+- Default log dir: `<app-state>/logs`. On Windows, `<app-state>` remains `%APPDATA%/chat4j` (or `%USERPROFILE%/AppData/Roaming/chat4j`). On non-Windows, it is `$XDG_STATE_HOME/chat4j` when that variable is an absolute path, otherwise `~/.local/state/chat4j`.
+- Emergency bootstrap fallback if normal path resolution fails: `~/.local/state/chat4j/logs/bootstrap-fallback.log`.
 
 Noise dampening in `logback.xml`:
 

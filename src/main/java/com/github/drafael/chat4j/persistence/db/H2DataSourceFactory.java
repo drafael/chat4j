@@ -21,7 +21,6 @@ import org.h2.jdbcx.JdbcDataSource;
 
 public final class H2DataSourceFactory {
 
-    private static final String CREDENTIALS_FILE_NAME = "db.credentials";
     private static final String USER_KEY = "user";
     private static final String PASSWORD_KEY = "password";
     private static final String DEFAULT_USER = "sa";
@@ -132,7 +131,7 @@ public final class H2DataSourceFactory {
     }
 
     private static Path credentialsFile(StoragePaths storagePaths) {
-        return storagePaths.appConfigDirectory().resolve(CREDENTIALS_FILE_NAME);
+        return storagePaths.databaseCredentialsFile();
     }
 
     private static String generatePassword() {

@@ -152,6 +152,9 @@ class DatabaseBootstrapTest {
 
     private void cleanStorage() throws IOException {
         deleteRecursively(storagePaths.appConfigDirectory());
+        deleteRecursively(storagePaths.appDataDirectory());
+        deleteRecursively(storagePaths.appCacheDirectory());
+        deleteRecursively(storagePaths.appStateDirectory());
     }
 
     private void deleteRecursively(Path path) throws IOException {

@@ -45,7 +45,7 @@ import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
-/** Immutable, no-clobber speech catalog publication backed by settings pointers. */
+/** Immutable, no-clobber speech catalog publication backed by cache metadata pointers. */
 @Slf4j
 public final class CatalogSnapshotStore {
 
@@ -71,31 +71,50 @@ public final class CatalogSnapshotStore {
     private static final FileAttribute<?> OWNER_ONLY_FILE_ATTRIBUTE = PosixFilePermissions.asFileAttribute(
             PosixFilePermissions.fromString("rw-------")
     );
+    private static final Pattern METADATA_KEY = Pattern.compile(
+            "chat4j\\.(?:stt|tts)\\.catalog\\..+\\.(?:modelsFile|voicesFile|rawJsonFile|updatedAt)"
+    );
     private static final ConcurrentMap<StoreKey, CatalogSnapshotStore> APPLICATION_STORES = new ConcurrentHashMap<>();
 
     private final CacheRootHandle root;
     private final SettingsRepository settings;
+    private final SettingsRepository applicationSettings;
     private final Clock clock;
     private final Supplier<UUID> uuidSupplier;
     private final ConcurrentMap<String, CatalogSnapshotRead> cachedReads = new ConcurrentHashMap<>();
 
     CatalogSnapshotStore(@NonNull CacheRootHandle root, @NonNull SettingsRepository settings) {
-        this(root, settings, Clock.systemUTC(), UUID::randomUUID);
+        this(root, settings, settings, Clock.systemUTC(), UUID::randomUUID);
     }
 
-    /** Returns the sole shared store for the settings file's sibling cache directory. */
+    /**
+     * Compatibility factory for callers that own an isolated settings repository.
+     * Application startup uses the explicit three-argument {@link #shared} factory.
+     */
     public static CatalogSnapshotStore forSettings(@NonNull SettingsRepository settings) {
         Path settingsFile = settings.settingsFileIdentity();
-        return shared(CacheRootHandle.of(settingsFile.getParent().resolve("cache")), settings);
+        return shared(CacheRootHandle.of(settingsFile.getParent().resolve("cache")), settings, settings);
     }
 
-    /** Returns the sole shared store for a root/settings pair in the running application. */
+    /** Returns the sole shared store for an explicit cache root and metadata repository. */
     public static CatalogSnapshotStore shared(
             @NonNull CacheRootHandle root,
-            @NonNull SettingsRepository settings
+            @NonNull SettingsRepository metadata,
+            @NonNull SettingsRepository applicationSettings
     ) {
-        StoreKey key = new StoreKey(root.path(), settings.settingsFileIdentity());
-        return APPLICATION_STORES.computeIfAbsent(key, ignored -> new CatalogSnapshotStore(root, settings));
+        StoreKey key = new StoreKey(
+                root.path(),
+                metadata.settingsFileIdentity(),
+                applicationSettings.settingsFileIdentity()
+        );
+        return APPLICATION_STORES.computeIfAbsent(
+                key,
+                ignored -> new CatalogSnapshotStore(root, metadata, applicationSettings, Clock.systemUTC(), UUID::randomUUID)
+        );
+    }
+
+    static CatalogSnapshotStore shared(@NonNull CacheRootHandle root, @NonNull SettingsRepository settings) {
+        return shared(root, settings, settings);
     }
 
     CatalogSnapshotStore(
@@ -104,10 +123,45 @@ public final class CatalogSnapshotStore {
             @NonNull Clock clock,
             @NonNull Supplier<UUID> uuidSupplier
     ) {
+        this(root, settings, settings, clock, uuidSupplier);
+    }
+
+    CatalogSnapshotStore(
+            @NonNull CacheRootHandle root,
+            @NonNull SettingsRepository settings,
+            @NonNull SettingsRepository applicationSettings,
+            @NonNull Clock clock,
+            @NonNull Supplier<UUID> uuidSupplier
+    ) {
         this.root = root;
         this.settings = settings;
+        this.applicationSettings = applicationSettings;
         this.clock = clock;
         this.uuidSupplier = uuidSupplier;
+    }
+
+    public static void importLegacyMetadata(
+            @NonNull SettingsRepository legacySettings,
+            @NonNull SettingsRepository metadata
+    ) {
+        try {
+            Map<String, String> legacyValues = legacySettings.findByPrefix("chat4j.", ENTRY_LIMIT).entrySet().stream()
+                    .filter(entry -> METADATA_KEY.matcher(entry.getKey()).matches())
+                    .collect(toMap(Map.Entry::getKey, Map.Entry::getValue, (left, right) -> left, LinkedHashMap::new));
+            if (legacyValues.isEmpty()) {
+                return;
+            }
+
+            Map<String, String> existing = metadata.getAll(legacyValues.keySet());
+            metadata.updateBatch(batch -> legacyValues.forEach((key, value) -> {
+                if (!existing.containsKey(key)) {
+                    batch.put(key, value);
+                }
+            }));
+            legacySettings.updateBatch(batch -> legacyValues.keySet().forEach(batch::remove));
+        } catch (RuntimeException e) {
+            log.warn("Legacy catalog metadata import skipped: {}", ExceptionUtils.getMessage(e));
+        }
     }
 
     public CatalogSnapshotRead read(@NonNull CatalogGroup group) {
@@ -234,8 +288,8 @@ public final class CatalogSnapshotStore {
                 settings.updateBatch(batch -> {
                     group.slots().forEach(slot -> batch.remove(slot.referenceKey()));
                     batch.remove(group.updatedAtKey());
-                    additionalKeys.forEach(batch::remove);
                 });
+                applicationSettings.updateBatch(batch -> additionalKeys.forEach(batch::remove));
                 group.slots().forEach(slot -> deleteReference(slot, references.get(slot.referenceKey())));
                 cacheInvalidatedGroup(group);
                 return true;
@@ -593,6 +647,6 @@ public final class CatalogSnapshotStore {
         }
     }
 
-    private record StoreKey(Path root, Path settingsFile) {
+    private record StoreKey(Path root, Path metadataFile, Path applicationSettingsFile) {
     }
 }

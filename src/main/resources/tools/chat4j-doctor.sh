@@ -15,7 +15,12 @@ WARN_COUNT=0
 CRITICAL_COUNT=0
 SECURITY_BASELINE_OK=0
 
-REPORT_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j/logs/doctor"
+STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
+case "$STATE_HOME" in
+  /*) ;;
+  *) STATE_HOME="${HOME}/.local/state" ;;
+esac
+REPORT_DIR="${STATE_HOME}/chat4j/logs/doctor"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/doctor-${TIMESTAMP}.md"
 JSON_FILE="${REPORT_DIR}/doctor-${TIMESTAMP}.json"
@@ -428,17 +433,17 @@ else
   record_check "Quarantine attribute" "WARN" "Unable to inspect xattr metadata: $(one_line "$(cat "$XATTR_OUTPUT")")"
 fi
 
-if mkdir -p "${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j/logs" 2>/dev/null; then
-  WRITE_TEST_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j/logs/.doctor-write-test-${TIMESTAMP}"
+if mkdir -p "${STATE_HOME}/chat4j/logs" 2>/dev/null; then
+  WRITE_TEST_FILE="${STATE_HOME}/chat4j/logs/.doctor-write-test-${TIMESTAMP}"
   TEMP_FILES+=("$WRITE_TEST_FILE")
   if touch "$WRITE_TEST_FILE" 2>/dev/null; then
     rm -f "$WRITE_TEST_FILE"
     record_check "Writable log directory" "PASS" "Chat4J log directory is writable"
   else
-    record_check "Writable log directory" "WARN" "Cannot write to Chat4J log directory" "Fix permissions on ${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j/logs"
+    record_check "Writable log directory" "WARN" "Cannot write to Chat4J log directory" "Fix permissions on ${STATE_HOME}/chat4j/logs"
   fi
 else
-  record_check "Writable log directory" "WARN" "Cannot create Chat4J log directory" "Fix permissions on ${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j"
+  record_check "Writable log directory" "WARN" "Cannot create Chat4J log directory" "Fix permissions on ${STATE_HOME}/chat4j"
 fi
 
 create_temp_file ENV_STDOUT_FILE "${REPORT_DIR}/env-probe-out-XXXXXX"

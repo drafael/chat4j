@@ -36,13 +36,17 @@ class CacheStorageInitializerTest {
 
         CacheStorageInitializer.CacheStorage initialized = subject.initialize();
 
+        SettingsRepository catalogMetadata = new SettingsRepository(storagePaths.catalogMetadataFile());
         assertThat(initialized.root()).isSameAs(CacheRootHandle.from(storagePaths));
-        assertThat(initialized.snapshots()).isSameAs(CatalogSnapshotStore.shared(initialized.root(), settings));
+        assertThat(initialized.snapshots()).isSameAs(
+                CatalogSnapshotStore.shared(initialized.root(), catalogMetadata, settings)
+        );
         assertThat(legacyRoot.resolve("provider.txt")).doesNotExist();
         assertThat(legacyRoot.resolve("keep.bin")).hasContent("keep");
         assertThat(settings.get("chat4j.tts.catalog.elevenlabs.models")).isEmpty();
         assertThat(settings.get("chat4j.tts.catalog.elevenlabs.updatedAt")).isEmpty();
-        assertThat(settings.get("chat4j.tts.catalog.elevenlabs.modelsFile")).contains(activeReference);
+        assertThat(settings.get("chat4j.tts.catalog.elevenlabs.modelsFile")).isEmpty();
+        assertThat(catalogMetadata.get("chat4j.tts.catalog.elevenlabs.modelsFile")).contains(activeReference);
         assertThat(settings.get("chat4j.tts.elevenlabs.model.id")).contains("selected-model");
         assertThat(cacheRoot.resolve(activeReference)).isRegularFile();
         assertThat(cacheRoot.resolve(orphanReference)).doesNotExist();

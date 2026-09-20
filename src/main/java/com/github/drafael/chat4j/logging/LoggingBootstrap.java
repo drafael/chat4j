@@ -70,7 +70,7 @@ public final class LoggingBootstrap {
         }
 
         try {
-            Path logDirectory = StoragePaths.defaultPaths().appConfigDirectory().resolve("logs");
+            Path logDirectory = StoragePaths.defaultPaths().logsDirectory();
             Files.createDirectories(logDirectory);
             System.setProperty(LOG_DIRECTORY_PROPERTY, logDirectory.toString());
         } catch (Exception ignored) {

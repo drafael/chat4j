@@ -159,6 +159,43 @@ class WindowStateSettingsTest {
     }
 
     @Test
+    @DisplayName("Legacy window placement moves from configuration into state storage")
+    void migrateLegacyState_whenConfigurationContainsWindowPlacement_movesKnownKeys() {
+        SettingsRepository configuration = settingsRepo("legacy-configuration");
+        SettingsRepository state = settingsRepo("window-state-migrated");
+        configuration.put("chat4j.ui.window.x", "100");
+        configuration.put("chat4j.ui.window.y", "80");
+        configuration.put("chat4j.ui.window.width", "800");
+        configuration.put("chat4j.ui.window.height", "500");
+        configuration.put("chat4j.ui.theme.name", "Arc Dark");
+
+        WindowStateSettings.migrateLegacyState(configuration, state);
+
+        assertThat(state.get("chat4j.ui.window.x")).contains("100");
+        assertThat(state.get("chat4j.ui.window.height")).contains("500");
+        assertThat(configuration.get("chat4j.ui.window.x")).isEmpty();
+        assertThat(configuration.get("chat4j.ui.window.height")).isEmpty();
+        assertThat(configuration.get("chat4j.ui.theme.name")).contains("Arc Dark");
+    }
+
+    @Test
+    @DisplayName("Existing state remains authoritative over stale configuration placement")
+    void migrateLegacyState_whenStateAlreadyExists_preservesStateAndRemovesLegacyKeys() {
+        SettingsRepository configuration = settingsRepo("stale-configuration");
+        SettingsRepository state = settingsRepo("authoritative-state");
+        configuration.put("chat4j.ui.window.x", "100");
+        configuration.put("chat4j.ui.window.width", "800");
+        state.put("chat4j.ui.window.x", "250");
+
+        WindowStateSettings.migrateLegacyState(configuration, state);
+
+        assertThat(state.get("chat4j.ui.window.x")).contains("250");
+        assertThat(state.get("chat4j.ui.window.width")).contains("800");
+        assertThat(configuration.get("chat4j.ui.window.x")).isEmpty();
+        assertThat(configuration.get("chat4j.ui.window.width")).isEmpty();
+    }
+
+    @Test
     @DisplayName("Save failures are best effort")
     void save_whenRepositoryFails_doesNotThrow() {
         var subject = new WindowStateSettings(new ThrowingSettingsRepo());

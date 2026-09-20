@@ -5,9 +5,10 @@ import com.github.drafael.chat4j.bootstrap.ApplicationBootstrap;
 import com.github.drafael.chat4j.logging.LoggingBootstrap;
 import com.github.drafael.chat4j.startup.NativeStderrNoiseFilter;
 import com.github.drafael.chat4j.startup.StartupFallbackLogger;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.*;
@@ -17,7 +18,6 @@ import java.util.function.BooleanSupplier;
 
 import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
 
-@Slf4j
 public class App {
 
     private static final String APP_PATH_PROPERTY = "jpackage.app-path";
@@ -26,11 +26,11 @@ public class App {
 
     public static void main(String[] args) {
         configureNativeGraphicsPipeline();
-        installMacOsAppKitStderrNoiseFilter();
         StartupFallbackLogger.info("Chat4J startup entrypoint invoked");
 
         try {
             LoggingBootstrap.initialize();
+            installMacOsAppKitStderrNoiseFilter();
             installUncaughtExceptionLogger();
             StartupFallbackLogger.info("Primary logging bootstrap initialized");
         } catch (Throwable t) {
@@ -63,10 +63,11 @@ public class App {
     }
 
     private static void installUncaughtExceptionLogger() {
+        Logger logger = LoggerFactory.getLogger(App.class);
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             String message = "Uncaught exception on thread %s".formatted(thread.getName());
             StartupFallbackLogger.error(message, throwable);
-            log.error(message, throwable);
+            logger.error(message, throwable);
         });
     }
 

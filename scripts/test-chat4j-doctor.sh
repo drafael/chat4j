@@ -10,7 +10,8 @@ trap cleanup EXIT
 
 export HOME="$test_root/home"
 export XDG_CONFIG_HOME="$test_root/config"
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+export XDG_STATE_HOME="$test_root/state"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
 
 fake_shell="$test_root/fake-login-shell"
 cat > "$fake_shell" <<'SHELL'
@@ -64,7 +65,7 @@ if [[ "$status" -ne 2 ]]; then
   exit 1
 fi
 
-report_dir="$XDG_CONFIG_HOME/chat4j/logs/doctor"
+report_dir="$XDG_STATE_HOME/chat4j/logs/doctor"
 report_file="$(find "$report_dir" -maxdepth 1 -name 'doctor-*.md' -print -quit)"
 json_file="$(find "$report_dir" -maxdepth 1 -name 'doctor-*.json' -print -quit)"
 if [[ -z "$report_file" || -z "$json_file" ]]; then
@@ -95,17 +96,17 @@ for credential in "$secret" "$perplexity_secret"; do
     exit 1
   fi
 done
-if find "$XDG_CONFIG_HOME" -type f \
+if find "$XDG_STATE_HOME" -type f \
   \( -name 'env-probe-*' -o -name 'doctor-checks-*' -o -name 'codesign-*' -o -name 'spctl-*' -o -name 'xattr-*' -o -name '.doctor-write-test-*' \) \
   | grep -q .; then
   echo "Doctor left temporary probe files behind" >&2
   exit 1
 fi
 
-fallback_config="$test_root/fallback-config"
+fallback_state="$test_root/fallback-state"
 set +e
 CHAT4J_DOCTOR_FAIL_INTERACTIVE_PROBE=1 \
-  XDG_CONFIG_HOME="$fallback_config" \
+  XDG_STATE_HOME="$fallback_state" \
   "$repo_root/scripts/chat4j-doctor.sh" --app "$test_root/missing/Chat4J.app" \
   >"$test_root/fallback.stdout" 2>"$test_root/fallback.stderr"
 fallback_status=$?
@@ -114,7 +115,7 @@ if [[ "$fallback_status" -ne 2 ]]; then
   echo "Expected fallback probe status 2 for a missing app, got $fallback_status" >&2
   exit 1
 fi
-fallback_report="$(find "$fallback_config/chat4j/logs/doctor" -maxdepth 1 -name 'doctor-*.md' -print -quit)"
+fallback_report="$(find "$fallback_state/chat4j/logs/doctor" -maxdepth 1 -name 'doctor-*.md' -print -quit)"
 if [[ -z "$fallback_report" ]] || ! grep -q 'Login-only key detection succeeded' "$fallback_report"; then
   echo "Doctor did not use the login-only shell fallback" >&2
   exit 1
@@ -124,7 +125,7 @@ if ! grep -q 'TOGETHER_API_KEY' "$fallback_report"; then
   exit 1
 fi
 for credential in "$secret" "$perplexity_secret"; do
-  if grep -R -F -q "$credential" "$test_root/fallback.stdout" "$test_root/fallback.stderr" "$fallback_config"; then
+  if grep -R -F -q "$credential" "$test_root/fallback.stdout" "$test_root/fallback.stderr" "$fallback_state"; then
     echo "Login-only fallback exposed a credential value" >&2
     exit 1
   fi
@@ -165,7 +166,7 @@ if kill -0 "$probe_pid" 2>/dev/null; then
   echo "Shell probe survived doctor termination" >&2
   exit 1
 fi
-if find "$XDG_CONFIG_HOME" -type f \
+if find "$XDG_STATE_HOME" -type f \
   \( -name 'env-probe-*' -o -name 'doctor-checks-*' -o -name 'codesign-*' -o -name 'spctl-*' -o -name 'xattr-*' -o -name '.doctor-write-test-*' \) \
   | grep -q .; then
   echo "Doctor left temporary files after TERM" >&2
@@ -181,7 +182,7 @@ done
 report_parent_file="$test_root/not-a-directory"
 printf '%s\n' "occupied" > "$report_parent_file"
 set +e
-XDG_CONFIG_HOME="$report_parent_file" \
+XDG_STATE_HOME="$report_parent_file" \
   "$repo_root/scripts/chat4j-doctor.sh" --app "$test_root/missing/Chat4J.app" \
   >"$test_root/report-dir.stdout" 2>"$test_root/report-dir.stderr"
 report_dir_status=$?
@@ -199,12 +200,12 @@ if grep -q 'Report written to:' "$test_root/report-dir.stdout"; then
   exit 1
 fi
 
-read_only_config="$test_root/read-only-config"
-read_only_report_dir="$read_only_config/chat4j/logs/doctor"
+read_only_state="$test_root/read-only-state"
+read_only_report_dir="$read_only_state/chat4j/logs/doctor"
 mkdir -p "$read_only_report_dir"
 chmod 500 "$read_only_report_dir"
 set +e
-XDG_CONFIG_HOME="$read_only_config" \
+XDG_STATE_HOME="$read_only_state" \
   "$repo_root/scripts/chat4j-doctor.sh" --app "$test_root/missing/Chat4J.app" --json \
   >"$test_root/read-only.stdout" 2>"$test_root/read-only.stderr"
 read_only_status=$?

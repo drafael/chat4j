@@ -61,9 +61,9 @@ public final class StartupFallbackLogger {
 
     private static Path resolveFallbackLogFile() {
         try {
-            return StoragePaths.defaultPaths().appConfigDirectory().resolve("logs").resolve(FILE_NAME);
+            return StoragePaths.defaultPaths().logsDirectory().resolve(FILE_NAME);
         } catch (Exception e) {
-            return Path.of(System.getProperty("user.home", "."), ".config", "chat4j", "logs", FILE_NAME);
+            return Path.of(System.getProperty("user.home", "."), ".local", "state", "chat4j", "logs", FILE_NAME);
         }
     }
 }

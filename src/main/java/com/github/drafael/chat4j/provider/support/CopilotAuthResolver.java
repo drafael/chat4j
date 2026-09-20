@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
 import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.SecureFileStore;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -70,7 +71,7 @@ public class CopilotAuthResolver {
             "Copilot-Integration-Id", "vscode-chat"
     );
 
-    private final Path userHome;
+    private final Path authFile;
     private final Map<String, String> environment;
     private final HttpTransport transport;
     private final UserPromptActions userPromptActions;
@@ -79,7 +80,7 @@ public class CopilotAuthResolver {
 
     public CopilotAuthResolver() {
         this(
-                Path.of(System.getProperty("user.home")),
+                StoragePaths.defaultPaths(),
                 System.getenv(),
                 JavaNetHttpTransport.create(Duration.ofSeconds(3), RedirectPolicy.NEVER),
                 new DesktopUserPromptActions()
@@ -95,7 +96,19 @@ public class CopilotAuthResolver {
     }
 
     CopilotAuthResolver(Path userHome, Map<String, String> environment, HttpTransport transport, UserPromptActions userPromptActions) {
-        this.userHome = userHome;
+        this.authFile = authFile(userHome, environment, CHAT4J_AUTH_FILENAME);
+        this.environment = environment == null ? emptyMap() : Map.copyOf(environment);
+        this.transport = transport;
+        this.userPromptActions = userPromptActions == null ? new DesktopUserPromptActions() : userPromptActions;
+    }
+
+    private CopilotAuthResolver(
+            StoragePaths storagePaths,
+            Map<String, String> environment,
+            HttpTransport transport,
+            UserPromptActions userPromptActions
+    ) {
+        this.authFile = storagePaths.copilotAuthFile();
         this.environment = environment == null ? emptyMap() : Map.copyOf(environment);
         this.transport = transport;
         this.userPromptActions = userPromptActions == null ? new DesktopUserPromptActions() : userPromptActions;
@@ -877,16 +890,13 @@ public class CopilotAuthResolver {
     }
 
     private Path chat4jAuthFile() {
-        return xdgConfigHome().resolve("chat4j").resolve(CHAT4J_AUTH_FILENAME);
+        return authFile;
     }
 
-    private Path xdgConfigHome() {
-        String xdgConfigHome = StringUtils.trimToNull(environment.get("XDG_CONFIG_HOME"));
-        if (StringUtils.isNotBlank(xdgConfigHome)) {
-            return Path.of(xdgConfigHome);
-        }
-
-        return userHome.resolve(".config");
+    private static Path authFile(Path userHome, Map<String, String> environment, String fileName) {
+        String configuredConfigHome = environment == null ? null : StringUtils.trimToNull(environment.get("XDG_CONFIG_HOME"));
+        Path configHome = configuredConfigHome == null ? userHome.resolve(".config") : Path.of(configuredConfigHome);
+        return configHome.resolve("chat4j").resolve(fileName);
     }
 
     private String urlEncode(String value) {

@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
 import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.SecureFileStore;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.sun.net.httpserver.HttpServer;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -72,7 +73,7 @@ public class CodexAuthResolver {
     private static final String BUILD_PROPERTIES_CLIENT_ID_KEY = "codexOAuthClientId";
     private static final String BUNDLED_CLIENT_ID_RESOURCE = "/oauth/chat4j-codex-client-id.txt";
 
-    private final Path userHome;
+    private final Path authFile;
     private final Map<String, String> environment;
     private final HttpTransport transport;
     private final AtomicBoolean explicitAuthOperationInProgress = new AtomicBoolean();
@@ -80,7 +81,7 @@ public class CodexAuthResolver {
 
     public CodexAuthResolver() {
         this(
-                Path.of(System.getProperty("user.home")),
+                StoragePaths.defaultPaths(),
                 System.getenv(),
                 JavaNetHttpTransport.create(Duration.ofSeconds(3), RedirectPolicy.NEVER)
         );
@@ -91,7 +92,13 @@ public class CodexAuthResolver {
             @NonNull Map<String, String> environment,
             @NonNull HttpTransport transport
     ) {
-        this.userHome = userHome;
+        this.authFile = authFile(userHome, environment, CHAT4J_AUTH_FILENAME);
+        this.environment = Map.copyOf(environment);
+        this.transport = transport;
+    }
+
+    private CodexAuthResolver(StoragePaths storagePaths, Map<String, String> environment, HttpTransport transport) {
+        this.authFile = storagePaths.codexAuthFile();
         this.environment = Map.copyOf(environment);
         this.transport = transport;
     }
@@ -912,14 +919,13 @@ public class CodexAuthResolver {
     }
 
     private Path chat4jAuthFile() {
-        return xdgConfigHome().resolve("chat4j").resolve(CHAT4J_AUTH_FILENAME);
+        return authFile;
     }
 
-    private Path xdgConfigHome() {
-        String xdgConfigHome = StringUtils.trimToNull(environment.get("XDG_CONFIG_HOME"));
-        return StringUtils.isNotBlank(xdgConfigHome)
-            ? Path.of(xdgConfigHome)
-            : userHome.resolve(".config");
+    private static Path authFile(Path userHome, Map<String, String> environment, String fileName) {
+        String configuredConfigHome = StringUtils.trimToNull(environment.get("XDG_CONFIG_HOME"));
+        Path configHome = configuredConfigHome == null ? userHome.resolve(".config") : Path.of(configuredConfigHome);
+        return configHome.resolve("chat4j").resolve(fileName);
     }
 
     private String urlEncode(String value) {

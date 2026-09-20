@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.mcp.McpManager;
 import com.github.drafael.chat4j.mcp.McpServerConfiguration;
 import com.github.drafael.chat4j.mcp.McpTransportType;
 import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
@@ -101,6 +102,7 @@ class SettingsDialogWindowTest {
                     createdOwner,
                     settings,
                     prompts,
+                    CatalogSnapshotStore.forSettings(settings),
                     WebViewRuntimeStatus.jEditorPaneDefault(),
                     ignored -> exitCalled.countDown(),
                     deadline -> deadline,

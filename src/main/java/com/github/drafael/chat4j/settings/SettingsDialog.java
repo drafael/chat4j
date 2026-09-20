@@ -4,6 +4,7 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.mcp.McpManager;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
@@ -64,6 +65,7 @@ public class SettingsDialog extends JDialog {
     private final LongConsumer exitAction;
     private final LongUnaryOperator exitAdmission;
     private final ExitTiming exitTiming;
+    private final CatalogSnapshotStore catalogSnapshots;
     private final Path sttModelsDirectory;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
@@ -80,6 +82,7 @@ public class SettingsDialog extends JDialog {
             @NonNull Frame owner,
             @NonNull SettingsRepository settingsRepo,
             @NonNull PromptCatalogRepo promptCatalogRepo,
+            @NonNull CatalogSnapshotStore catalogSnapshots,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
             @NonNull LongConsumer exitAction,
             @NonNull LongUnaryOperator exitAdmission,
@@ -100,6 +103,7 @@ public class SettingsDialog extends JDialog {
         this.exitAction = exitAction;
         this.exitAdmission = exitAdmission;
         this.exitTiming = exitTiming;
+        this.catalogSnapshots = catalogSnapshots;
         this.sttModelsDirectory = sttModelsDirectory;
         this.voskModelManagementService = voskModelManagementService;
         this.whisperModelManagementService = whisperModelManagementService;
@@ -258,6 +262,7 @@ public class SettingsDialog extends JDialog {
                 ),
                 new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(
                         settingsRepo,
+                        catalogSnapshots,
                         credentialResolver,
                         credentialMutationService,
                         subprocessEnvironment,
@@ -266,6 +271,7 @@ public class SettingsDialog extends JDialog {
                 )),
                 new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(
                         settingsRepo,
+                        catalogSnapshots,
                         sttModelsDirectory,
                         voskModelManagementService,
                         whisperModelManagementService,

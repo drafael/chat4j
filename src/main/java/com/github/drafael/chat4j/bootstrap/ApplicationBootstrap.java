@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.mcp.McpConfigurationRepository;
 import com.github.drafael.chat4j.mcp.McpManager;
 import com.github.drafael.chat4j.persistence.CacheRootHandle;
 import com.github.drafael.chat4j.persistence.CacheStorageInitializer;
+import com.github.drafael.chat4j.persistence.StorageLayoutMigrator;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
@@ -32,6 +33,7 @@ import com.github.drafael.chat4j.provider.support.McpSecretVault;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettings;
+import com.github.drafael.chat4j.settings.WindowStateSettings;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -80,6 +82,7 @@ public final class ApplicationBootstrap {
 
         runStage("platform_config", this::configurePlatformIntegration);
         runStage("early_look_and_feel", this::configureEarlyLookAndFeel);
+        runStage("storage_layout_migration", () -> new StorageLayoutMigrator(StoragePaths.defaultPaths()).migrate());
 
         long environmentStageStartedAt = beginStage("environment_init_async");
         var environmentTask = new FutureTask<>(environmentBootstrapper::initialize);
@@ -147,6 +150,14 @@ public final class ApplicationBootstrap {
     private StorageServices initializeCredentialIndependentStorage() {
         StoragePaths storagePaths = StoragePaths.defaultPaths();
         SettingsRepository settingsRepository = new SettingsRepository(storagePaths);
+        try {
+            WindowStateSettings.migrateLegacyState(
+                    settingsRepository,
+                    new SettingsRepository(storagePaths.windowStateFile())
+            );
+        } catch (RuntimeException e) {
+            log.warn("Failed to migrate legacy window state: {}", ExceptionUtils.getMessage(e));
+        }
         CacheStorageInitializer.CacheStorage cacheStorage =
                 new CacheStorageInitializer(storagePaths, settingsRepository).initialize();
         ProviderModelCacheService providerModelCacheService =

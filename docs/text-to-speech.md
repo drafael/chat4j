@@ -42,7 +42,7 @@ The integration follows Speechify's public Build API reference at `https://docs.
 
 Settings are file-backed through `SettingsRepository`; no database table is involved.
 
-Persisted keys:
+Application settings keys:
 
 ```text
 chat4j.tts.provider                         # off | system | deepgram | groq | elevenlabs | listenhub | speechify
@@ -50,12 +50,17 @@ chat4j.tts.<provider>.model.id
 chat4j.tts.<provider>.model.label
 chat4j.tts.<provider>.voice.id
 chat4j.tts.<provider>.voice.label
+```
+
+Cache metadata keys:
+
+```text
 chat4j.tts.catalog.<provider>.modelsFile
 chat4j.tts.catalog.<provider>.voicesFile
 chat4j.tts.catalog.<provider>.updatedAt
 ```
 
-Catalog settings contain snapshot basenames under `<app-config>/cache`. The referenced files contain JSON arrays of catalog items with `id`, `label`, and optional `description`. Saved selections are preserved even when a refreshed catalog omits them.
+Catalog pointer metadata is stored in `<app-cache>/catalog-index.properties`; the immutable JSON snapshots live under `<app-cache>/cache`. Snapshot items contain `id`, `label`, and an optional `description`. Saved model and voice selections remain in the application settings and are preserved when a refreshed catalog omits them.
 
 Settings UI behavior:
 

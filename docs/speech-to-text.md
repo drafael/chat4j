@@ -25,7 +25,7 @@ Open **Settings → Speech to Text**.
   - AssemblyAI defaults to automatic model selection, which omits `speech_models` so AssemblyAI can use Universal-3.5 Pro with Universal-2 fallback. Specific `universal-3-5-pro` and `universal-2` choices are also bundled.
   - Whisper.cpp shows only installed Chat4J-managed local models that are eligible for local transcription. Downloadable official ggml models are shown in the local model table.
   - Vosk shows only installed local models that are eligible for local transcription.
-- **Local models directory**: base directory for local STT models. The default is under the app config directory at `stt/models`.
+- **Local models directory**: base directory for local STT models. The default is under the app data directory at `stt/models` (`${XDG_DATA_HOME:-$HOME/.local/share}/chat4j/stt/models` on non-Windows systems).
 - **Max recording seconds**: valid range is 1–600 seconds.
 
 ## Groq credentials and base URL
@@ -133,7 +133,7 @@ The effective Whisper.cpp model root is:
 With default paths, that is under:
 
 ```text
-<app-config>/stt/models/whisper
+<app-data>/stt/models/whisper
 ```
 
 Whisper.cpp model behavior:
@@ -169,7 +169,7 @@ The effective Vosk model root is:
 With default paths, that is under:
 
 ```text
-<app-config>/stt/models/vosk
+<app-data>/stt/models/vosk
 ```
 
 Vosk model behavior:

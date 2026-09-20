@@ -21,7 +21,9 @@ public final class CacheStorageInitializer {
         root.availableRoot();
         new LegacyCacheCleanupService(storagePaths).cleanup();
         new ObsoleteSpeechCatalogSettingsCleanup(settings).cleanup();
-        CatalogSnapshotStore snapshots = CatalogSnapshotStore.shared(root, settings);
+        SettingsRepository catalogMetadata = new SettingsRepository(storagePaths.catalogMetadataFile());
+        CatalogSnapshotStore.importLegacyMetadata(settings, catalogMetadata);
+        CatalogSnapshotStore snapshots = CatalogSnapshotStore.shared(root, catalogMetadata, settings);
         snapshots.cleanupOrphans();
         snapshots.preloadActiveCatalogs();
         return new CacheStorage(root, snapshots);
