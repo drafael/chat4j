@@ -84,17 +84,19 @@ public final class CodexLocalModelCache {
 
     static Snapshot readSnapshot(Path userHome) {
         LocalModels localModels = readLocalCacheModels(userHome);
-        LinkedHashSet<String> models = new LinkedHashSet<>(BUILTIN_CODEX_MODELS);
-        models.addAll(localModels.visible());
+        LinkedHashSet<String> models = new LinkedHashSet<>(
+                localModels.authoritative() ? localModels.visible() : BUILTIN_CODEX_MODELS
+        );
         models.removeAll(localModels.hidden());
         Map<String, List<ReasoningLevel>> reasoningLevels = new LinkedHashMap<>(BUILTIN_REASONING_LEVELS);
         reasoningLevels.putAll(localModels.reasoningLevelsByModel());
-        localModels.hidden().forEach(reasoningLevels::remove);
+        reasoningLevels.keySet().retainAll(models);
         return new Snapshot(
                 ModelOrdering.sanitizeAndSortByProvider(CODEX_PROVIDER_NAME, models.stream().toList()),
                 localModels.hidden(),
                 reasoningLevels,
-                localModels.loadedSuccessfully()
+                localModels.loadedSuccessfully(),
+                localModels.authoritative()
         );
     }
 
@@ -112,7 +114,7 @@ public final class CodexLocalModelCache {
 
             List<String> visible = modelSlugs(cache.models(), false);
             List<String> hidden = modelSlugs(cache.models(), true);
-            return new LocalModels(visible, hidden, reasoningLevelsByModel(cache.models()), true);
+            return new LocalModels(visible, hidden, reasoningLevelsByModel(cache.models()), true, true);
         } catch (Exception e) {
             log.warn("Failed reading OpenAI Codex models cache: {}", ExceptionUtils.getMessage(e));
             return LocalModels.empty(false);
@@ -151,7 +153,7 @@ public final class CodexLocalModelCache {
 
     public static List<String> merge(List<String> modelIds, Snapshot localSnapshot) {
         LinkedHashSet<String> merged = new LinkedHashSet<>();
-        if (modelIds != null) {
+        if (!localSnapshot.authoritative() && modelIds != null) {
             merged.addAll(modelIds);
         }
         merged.addAll(localSnapshot.models());
@@ -163,18 +165,19 @@ public final class CodexLocalModelCache {
             List<String> models,
             List<String> hiddenModels,
             Map<String, List<ReasoningLevel>> reasoningLevelsByModel,
-            boolean loadedSuccessfully
+            boolean loadedSuccessfully,
+            boolean authoritative
     ) {
         public Snapshot(List<String> models, List<String> hiddenModels) {
-            this(models, hiddenModels, emptyMap(), true);
+            this(models, hiddenModels, emptyMap(), true, false);
         }
 
         public Snapshot(List<String> models, List<String> hiddenModels, boolean loadedSuccessfully) {
-            this(models, hiddenModels, emptyMap(), loadedSuccessfully);
+            this(models, hiddenModels, emptyMap(), loadedSuccessfully, false);
         }
 
         public Snapshot(List<String> models, List<String> hiddenModels, Map<String, List<ReasoningLevel>> reasoningLevelsByModel) {
-            this(models, hiddenModels, reasoningLevelsByModel, true);
+            this(models, hiddenModels, reasoningLevelsByModel, true, false);
         }
 
         public Snapshot {
@@ -211,10 +214,11 @@ public final class CodexLocalModelCache {
             List<String> visible,
             List<String> hidden,
             Map<String, List<ReasoningLevel>> reasoningLevelsByModel,
-            boolean loadedSuccessfully
+            boolean loadedSuccessfully,
+            boolean authoritative
     ) {
         private static LocalModels empty(boolean loadedSuccessfully) {
-            return new LocalModels(emptyList(), emptyList(), emptyMap(), loadedSuccessfully);
+            return new LocalModels(emptyList(), emptyList(), emptyMap(), loadedSuccessfully, false);
         }
     }
 }

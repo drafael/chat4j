@@ -101,10 +101,10 @@ Runtime behavior:
 
 - Codex chat uses `CodexCliChatCompletionClient` by design. Each request writes the admitted Chat4J credential to an owner-only temporary `CODEX_HOME`, uses it for app-server and exec fallback, and deletes it afterward; the user's global Codex login is never used as subprocess auth.
 - Remote model listing uses the OpenAI-compatible `/v1/models` endpoint.
-- Chat4J keeps that remote catalog in `<app-cache>/cache/OpenAI_Codex.txt` and overlays it in memory with the current visible models from `~/.codex/models_cache.json`.
-- Local Codex visibility changes are refreshed without persisting local-only model IDs into Chat4J's remote catalog cache. Chat4J treats the current file contents as authoritative and does not reject them based on its `fetched_at` value.
+- Chat4J keeps that remote catalog in `<app-cache>/cache/OpenAI_Codex.txt`. When `~/.codex/models_cache.json` contains a valid catalog, its visible models replace the remote and built-in lists in both selectors; hidden and omitted models are not reintroduced by fallback lists.
+- Local Codex visibility changes are refreshed without persisting local-only model IDs into Chat4J's remote catalog cache. Chat4J does not reject the local catalog based on its `fetched_at` value. Failed reads retain the last successfully loaded snapshot; before one is available, remote and built-in models provide fallback choices.
 - Agent Mode chooses the Codex CLI-first adapter path for OpenAI Codex to avoid noisy HTTP tool-calling fallback warnings.
 
 Troubleshooting:
 
-- If the Codex model picker is empty after auth changes, remove `<app-cache>/cache/OpenAI_Codex.txt` and refresh provider models.
+- If Codex models are missing, first refresh the installed Codex CLI's model catalog, then reopen the Chat4J model popup. An empty visible local catalog intentionally produces no model choices; clearing Chat4J's remote cache does not override it.

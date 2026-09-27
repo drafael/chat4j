@@ -41,6 +41,54 @@ class CodexLocalModelCacheTest {
     }
 
     @Test
+    @DisplayName("A visible Codex catalog excludes obsolete built-ins and stale remote models")
+    void readSnapshot_whenLocalCatalogIsPresent_usesOnlyVisibleModels() throws Exception {
+        Path codexDirectory = tempDir.resolve(".codex");
+        Files.createDirectories(codexDirectory);
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {
+                  "models": [
+                    {"slug": "gpt-6-astra", "visibility": "list"},
+                    {"slug": "gpt-5.5", "visibility": "list"},
+                    {"slug": "gpt-reserve", "visibility": "hide"}
+                  ]
+                }
+                """);
+
+        var snapshot = CodexLocalModelCache.readSnapshot(tempDir);
+
+        assertThat(snapshot.models()).containsExactlyInAnyOrder("gpt-6-astra", "gpt-5.5");
+        assertThat(snapshot.reasoningLevelsByModel()).containsKey("gpt-5.5").doesNotContainKey("gpt-5.6-sol");
+        assertThat(CodexLocalModelCache.merge(List.of("gpt-5.4", "stale-remote-model", "gpt-reserve"), snapshot))
+                .containsExactlyInAnyOrder("gpt-6-astra", "gpt-5.5");
+    }
+
+    @Test
+    @DisplayName("An empty visible Codex catalog does not resurrect fallback models")
+    void readSnapshot_whenAllLocalModelsAreHidden_returnsEmptyCatalog() throws Exception {
+        Path codexDirectory = tempDir.resolve(".codex");
+        Files.createDirectories(codexDirectory);
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {"models": [{"slug": "gpt-reserve", "visibility": "hide"}]}
+                """);
+
+        var snapshot = CodexLocalModelCache.readSnapshot(tempDir);
+
+        assertThat(snapshot.loadedSuccessfully()).isTrue();
+        assertThat(snapshot.models()).isEmpty();
+        assertThat(CodexLocalModelCache.merge(List.of("stale-remote-model"), snapshot)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Missing Codex metadata retains the remote and built-in fallback catalog")
+    void merge_whenLocalCacheIsMissing_preservesFallbackModels() {
+        var snapshot = CodexLocalModelCache.readSnapshot(tempDir);
+
+        assertThat(CodexLocalModelCache.merge(List.of("remote-codex-model"), snapshot))
+                .contains("remote-codex-model", "gpt-5.5");
+    }
+
+    @Test
     @DisplayName("Missing Codex local cache uses current built-in models and reasoning levels")
     void readSnapshot_whenLocalCacheIsMissing_returnsSuccessfulBuiltinSnapshot() {
         CodexLocalModelCache.Snapshot snapshot = CodexLocalModelCache.readSnapshot(tempDir);

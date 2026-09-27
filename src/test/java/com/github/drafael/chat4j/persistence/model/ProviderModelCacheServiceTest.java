@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProviderModelCacheServiceTest {
@@ -750,6 +751,42 @@ class ProviderModelCacheServiceTest {
 
         assertThat(subject.refreshCodexLocalModels())
                 .contains("gpt-5.5", "gpt-5.4", "gpt-5.3-codex");
+    }
+
+    @Test
+    @DisplayName("The authoritative Codex catalog filters every selector path and survives failed reads")
+    void getModels_whenCodexCatalogIsAuthoritative_excludesRemoteAndSeedModels() {
+        var localModels = new AtomicReference<>(new CodexLocalModelCache.Snapshot(
+                List.of("gpt-6-astra"), emptyList(), emptyMap(), true, true
+        ));
+        var cache = new InMemoryModelCache();
+        cache.writeCache(
+                "OpenAI Codex",
+                Instant.parse("2026-04-10T10:00:00Z"),
+                "https://api.openai.com/v1",
+                List.of("gpt-5.3-codex")
+        );
+        var subject = new ProviderModelCacheService(
+                cache,
+                fixedClock("2026-04-10T11:00:00Z"),
+                Duration.ofHours(12),
+                false,
+                localModels::get
+        );
+
+        assertThat(subject.refreshCodexLocalModels()).containsExactly("gpt-6-astra");
+        assertThat(subject.getModels("OpenAI Codex")).containsExactly("gpt-6-astra");
+        assertThat(subject.findUsableModels("OpenAI Codex", "https://api.openai.com/v1"))
+                .contains(List.of("gpt-6-astra"));
+        assertThat(subject.modelsWithLocalOverlay("OpenAI Codex", List.of("obsolete-seed")))
+                .containsExactly("gpt-6-astra");
+
+        localModels.set(new CodexLocalModelCache.Snapshot(emptyList(), emptyList(), false));
+
+        assertThat(subject.refreshCodexLocalModels()).containsExactly("gpt-6-astra");
+        assertThat(cache.entries.get("OpenAI Codex").models()).containsExactly("gpt-5.3-codex");
+        assertThat(subject.modelsWithLocalOverlay("OpenAI", List.of("other-provider-model")))
+                .containsExactly("other-provider-model");
     }
 
     @Test

@@ -7,6 +7,8 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -33,6 +35,65 @@ class ProviderCapabilityResolverTest {
         );
 
         assertThat(supported).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"})
+    @DisplayName("GPT-6 Codex models expose image support before capability probing")
+    void supportsImageInput_whenGpt6CodexModelIsSelected_returnsTrue(String modelId) {
+        assertThat(ProviderCapabilityResolver.supportsImageInput(
+                ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId
+        )).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"})
+    @DisplayName("GPT-6 Codex models expose reasoning support before capability probing")
+    void supportsReasoning_whenGpt6CodexModelIsSelected_returnsTrue(String modelId) {
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId
+        )).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"})
+    @DisplayName("GPT-6 Codex capability hints survive unavailable metadata endpoints")
+    void supportsCapabilities_whenGpt6CodexMetadataIsUnavailable_returnsHintedSupport(String modelId) throws Exception {
+        HttpServer server = createUnavailableCapabilityServer();
+        try {
+            assertThat(ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
+            )).isTrue();
+            assertThat(ProviderCapabilityResolver.supportsReasoning(
+                    ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
+            )).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"})
+    @DisplayName("Explicit negative GPT-6 capability metadata overrides model-name hints")
+    void supportsCapabilities_whenGpt6MetadataDisablesSupport_returnsFalse(String modelId) throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                modelId,
+                200,
+                """
+                        {"id": "%s", "supports_vision": false, "supports_reasoning": false}
+                        """.formatted(modelId),
+                "{\"data\": []}"
+        );
+        try {
+            assertThat(ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
+            )).isFalse();
+            assertThat(ProviderCapabilityResolver.supportsReasoning(
+                    ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
+            )).isFalse();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
