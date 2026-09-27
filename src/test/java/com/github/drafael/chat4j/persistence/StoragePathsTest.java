@@ -3,10 +3,14 @@ package com.github.drafael.chat4j.persistence;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class StoragePathsTest {
+
+    @TempDir
+    private Path tempDir;
 
     @Test
     @DisplayName("Default paths use APPDATA on Windows when environment variable is configured")
@@ -41,20 +45,21 @@ class StoragePathsTest {
     @Test
     @DisplayName("Non-Windows paths use each configured XDG home")
     void defaultPaths_whenNonWindowsAndXdgHomesConfigured_usesScopedHomes() {
+        Path xdgHome = tempDir.resolve("xdg");
         var subject = StoragePaths.defaultPaths(
                 false,
-                "/home/me",
-                "/xdg/config",
-                "/xdg/data",
-                "/xdg/cache",
-                "/xdg/state",
+                tempDir.resolve("home").toString(),
+                xdgHome.resolve("config").toString(),
+                xdgHome.resolve("data").toString(),
+                xdgHome.resolve("cache").toString(),
+                xdgHome.resolve("state").toString(),
                 null
         );
 
-        assertThat(subject.appConfigDirectory()).isEqualTo(Path.of("/xdg/config/chat4j"));
-        assertThat(subject.appDataDirectory()).isEqualTo(Path.of("/xdg/data/chat4j"));
-        assertThat(subject.appCacheDirectory()).isEqualTo(Path.of("/xdg/cache/chat4j"));
-        assertThat(subject.appStateDirectory()).isEqualTo(Path.of("/xdg/state/chat4j"));
+        assertThat(subject.appConfigDirectory()).isEqualTo(xdgHome.resolve("config/chat4j"));
+        assertThat(subject.appDataDirectory()).isEqualTo(xdgHome.resolve("data/chat4j"));
+        assertThat(subject.appCacheDirectory()).isEqualTo(xdgHome.resolve("cache/chat4j"));
+        assertThat(subject.appStateDirectory()).isEqualTo(xdgHome.resolve("state/chat4j"));
     }
 
     @Test
@@ -90,31 +95,32 @@ class StoragePathsTest {
     @Test
     @DisplayName("Storage content is assigned to its corresponding scoped home")
     void scopedFiles_whenResolved_useCorrectHomes() {
+        Path xdgHome = tempDir.resolve("xdg");
         var subject = StoragePaths.defaultPaths(
                 false,
-                "/home/me",
-                "/xdg/config",
-                "/xdg/data",
-                "/xdg/cache",
-                "/xdg/state",
+                tempDir.resolve("home").toString(),
+                xdgHome.resolve("config").toString(),
+                xdgHome.resolve("data").toString(),
+                xdgHome.resolve("cache").toString(),
+                xdgHome.resolve("state").toString(),
                 null
         );
 
-        assertThat(subject.settingsFile()).isEqualTo(Path.of("/xdg/config/chat4j/chat4j.properties"));
-        assertThat(subject.mcpFile()).isEqualTo(Path.of("/xdg/config/chat4j/mcp.json"));
-        assertThat(subject.promptsFile()).isEqualTo(Path.of("/xdg/data/chat4j/prompts.json"));
-        assertThat(subject.sqliteDatabaseFile()).isEqualTo(Path.of("/xdg/data/chat4j/data/chat4j.sqlite3"));
-        assertThat(subject.attachmentsDirectory()).isEqualTo(Path.of("/xdg/data/chat4j/attachments"));
-        assertThat(subject.secretsDirectory()).isEqualTo(Path.of("/xdg/data/chat4j/secrets"));
-        assertThat(subject.copilotAuthFile()).isEqualTo(Path.of("/xdg/data/chat4j/secrets/copilot-auth.json"));
-        assertThat(subject.codexAuthFile()).isEqualTo(Path.of("/xdg/data/chat4j/secrets/codex-auth.json"));
-        assertThat(subject.databaseCredentialsFile()).isEqualTo(Path.of("/xdg/data/chat4j/secrets/db.credentials"));
-        assertThat(subject.sttModelsDirectory()).isEqualTo(Path.of("/xdg/data/chat4j/stt/models"));
-        assertThat(subject.cacheDirectory()).isEqualTo(Path.of("/xdg/cache/chat4j/cache"));
-        assertThat(subject.catalogMetadataFile()).isEqualTo(Path.of("/xdg/cache/chat4j/catalog-index.properties"));
-        assertThat(subject.jcefBundleDirectory()).isEqualTo(Path.of("/xdg/cache/chat4j/jcef-bundle"));
-        assertThat(subject.sttTempDirectory()).isEqualTo(Path.of("/xdg/cache/chat4j/stt/temp"));
-        assertThat(subject.logsDirectory()).isEqualTo(Path.of("/xdg/state/chat4j/logs"));
-        assertThat(subject.windowStateFile()).isEqualTo(Path.of("/xdg/state/chat4j/window.properties"));
+        assertThat(subject.settingsFile()).isEqualTo(xdgHome.resolve("config/chat4j/chat4j.properties"));
+        assertThat(subject.mcpFile()).isEqualTo(xdgHome.resolve("config/chat4j/mcp.json"));
+        assertThat(subject.promptsFile()).isEqualTo(xdgHome.resolve("data/chat4j/prompts.json"));
+        assertThat(subject.sqliteDatabaseFile()).isEqualTo(xdgHome.resolve("data/chat4j/data/chat4j.sqlite3"));
+        assertThat(subject.attachmentsDirectory()).isEqualTo(xdgHome.resolve("data/chat4j/attachments"));
+        assertThat(subject.secretsDirectory()).isEqualTo(xdgHome.resolve("data/chat4j/secrets"));
+        assertThat(subject.copilotAuthFile()).isEqualTo(xdgHome.resolve("data/chat4j/secrets/copilot-auth.json"));
+        assertThat(subject.codexAuthFile()).isEqualTo(xdgHome.resolve("data/chat4j/secrets/codex-auth.json"));
+        assertThat(subject.databaseCredentialsFile()).isEqualTo(xdgHome.resolve("data/chat4j/secrets/db.credentials"));
+        assertThat(subject.sttModelsDirectory()).isEqualTo(xdgHome.resolve("data/chat4j/stt/models"));
+        assertThat(subject.cacheDirectory()).isEqualTo(xdgHome.resolve("cache/chat4j/cache"));
+        assertThat(subject.catalogMetadataFile()).isEqualTo(xdgHome.resolve("cache/chat4j/catalog-index.properties"));
+        assertThat(subject.jcefBundleDirectory()).isEqualTo(xdgHome.resolve("cache/chat4j/jcef-bundle"));
+        assertThat(subject.sttTempDirectory()).isEqualTo(xdgHome.resolve("cache/chat4j/stt/temp"));
+        assertThat(subject.logsDirectory()).isEqualTo(xdgHome.resolve("state/chat4j/logs"));
+        assertThat(subject.windowStateFile()).isEqualTo(xdgHome.resolve("state/chat4j/window.properties"));
     }
 }
