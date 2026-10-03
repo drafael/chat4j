@@ -300,7 +300,7 @@ class ConversationPdfExportServiceTest {
         )) {
             assertThat(subject.validatePublicationBackend(() -> false).join())
                     .hasValueSatisfying(reason -> assertThat(reason)
-                            .contains("Mermaid CLI version 11.x", "10.x"));
+                            .contains("Mermaid CLI version 11.x or 12.x", "10.x"));
         }
     }
 
@@ -317,7 +317,7 @@ class ConversationPdfExportServiceTest {
 
         try (var subject = new ConversationPdfExportService(repository, settingsRepository, Map.of())) {
             assertThat(subject.validatePublicationBackend(() -> false).join())
-                    .hasValueSatisfying(reason -> assertThat(reason).contains("Mermaid CLI").contains("11.x"));
+                    .hasValueSatisfying(reason -> assertThat(reason).contains("Mermaid CLI").contains("11.x or 12.x"));
         }
     }
 

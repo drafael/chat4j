@@ -17,12 +17,15 @@ import javax.imageio.ImageIO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -116,6 +119,7 @@ class MermaidCliDiagramRendererTest {
             writePng(outputPath(command), 600, 800);
             return PdfExportProcessRunner.Outcome.completed(0, "");
         });
+        stubSupportedVersion(processRunner);
         var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), processRunner);
 
         MermaidCliDiagramRenderer.Result result = subject.render(source, tempDirectory, 0, 0, () -> false);
@@ -129,7 +133,7 @@ class MermaidCliDiagramRendererTest {
                     D --> E["Render Diagram"]
                 """);
         verify(processRunner, times(2)).run(
-                anyList(),
+                argThat(command -> command.contains("--input")),
                 any(Path.class),
                 anyMap(),
                 any(BooleanSupplier.class),
@@ -215,12 +219,13 @@ class MermaidCliDiagramRendererTest {
 
     @Test
     @DisplayName("The Mermaid command keeps the configured executable as one direct token")
-    void command_whenBuilt_usesOnlyFixedApplicationArguments() {
+    void command_whenBuilt_usesOnlyFixedApplicationArguments() throws Exception {
         var subject = new MermaidCliDiagramRenderer(
                 "/Applications/Mermaid CLI/mmdc",
                 Map.of(),
-                new PdfExportProcessRunner()
+                versionRunner("11.16.0")
         );
+        assertThat(subject.unavailableReason(() -> false)).isEmpty();
         Path input = tempDirectory.resolve("diagram.mmd");
         Path output = tempDirectory.resolve("diagram.png");
 
@@ -232,6 +237,58 @@ class MermaidCliDiagramRendererTest {
                 .contains("--puppeteerConfigFile", tempDirectory.resolve("publication-puppeteer-config.json").toString())
                 .contains("--width", "1200", "--height", "800", "--scale", "2", "--quiet")
                 .doesNotContain("sh", "bash", "cmd.exe", "npx", "--no-sandbox");
+    }
+
+    @Test
+    @DisplayName("CLI 12 rendering detects its version once and omits removed viewport flags")
+    void render_whenCliVersionIs12_usesCompatibleCommandWithoutSeparatePreflight() throws Exception {
+        PdfExportProcessRunner processRunner = successfulPngRunner(600, 400);
+        when(processRunner.run(
+                argThat(command -> command.contains("--version")),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class),
+                any(Duration.class),
+                anyString()
+        )).thenReturn(PdfExportProcessRunner.Outcome.completed(0, "12.0.0"));
+        var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), processRunner);
+
+        MermaidCliDiagramRenderer.Result first = subject.render("flowchart LR\nA --> B", tempDirectory, 0, 0, () -> false);
+        MermaidCliDiagramRenderer.Result second = subject.render("flowchart LR\nB --> C", tempDirectory, 0, 1, () -> false);
+
+        assertThat(first.successful()).isTrue();
+        assertThat(second.successful()).isTrue();
+        assertThat(subject.command(tempDirectory.resolve("diagram.mmd"), tempDirectory.resolve("diagram.png"), tempDirectory))
+                .contains("--scale", "2", "--quiet", "--configFile", "--puppeteerConfigFile")
+                .doesNotContain("--width", "--height", "--size");
+        verify(processRunner, times(1)).run(
+                argThat(command -> command.contains("--version")),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class),
+                any(Duration.class),
+                anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("Unsupported Mermaid versions fall back to source without launching a render")
+    void render_whenCliVersionIsUnsupported_returnsUnavailableFailure() throws Exception {
+        PdfExportProcessRunner processRunner = versionRunner("13.0.0");
+        var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), processRunner);
+
+        MermaidCliDiagramRenderer.Result result = subject.render("flowchart LR\nA --> B", tempDirectory, 0, 0, () -> false);
+
+        assertThat(result.failure()).isEqualTo(MermaidCliDiagramRenderer.Failure.UNAVAILABLE);
+        assertThat(tempDirectory.resolve("mermaid-0-0.mmd")).doesNotExist();
+        verify(processRunner, times(1)).run(
+                anyList(),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class),
+                any(Duration.class),
+                anyString()
+        );
     }
 
     @Test
@@ -252,6 +309,7 @@ class MermaidCliDiagramRendererTest {
             writePng(outputPath(command), 600, 400);
             return PdfExportProcessRunner.Outcome.completed(0, "");
         });
+        stubSupportedVersion(processRunner);
         var subject = new MermaidCliDiagramRenderer(
                 "mmdc",
                 Map.of(
@@ -296,6 +354,7 @@ class MermaidCliDiagramRendererTest {
             Files.writeString(outputPath(command), "not a png");
             return PdfExportProcessRunner.Outcome.completed(0, "");
         });
+        stubSupportedVersion(processRunner);
         var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), processRunner);
 
         MermaidCliDiagramRenderer.Result result = subject.render(
@@ -330,6 +389,8 @@ class MermaidCliDiagramRendererTest {
                 any(Duration.class),
                 anyString()
         )).thenReturn(PdfExportProcessRunner.Outcome.completed(1, "Parse error"));
+        stubSupportedVersion(missingOutputRunner);
+        stubSupportedVersion(syntaxFailureRunner);
 
         MermaidCliDiagramRenderer.Result missingOutput = new MermaidCliDiagramRenderer(
                 "mmdc",
@@ -414,6 +475,8 @@ class MermaidCliDiagramRendererTest {
                 any(Duration.class),
                 anyString()
         )).thenReturn(PdfExportProcessRunner.Outcome.cancelledOutcome());
+        stubSupportedVersion(timeoutRunner);
+        stubSupportedVersion(cancelledRunner);
 
         MermaidCliDiagramRenderer.Result timeout = new MermaidCliDiagramRenderer(
                 "mmdc",
@@ -428,6 +491,26 @@ class MermaidCliDiagramRendererTest {
 
         assertThat(timeout.failure()).isEqualTo(MermaidCliDiagramRenderer.Failure.TIMEOUT);
         assertThat(cancelled.cancelled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Cancellation during version detection does not launch a diagram render")
+    void render_whenVersionCheckIsCancelled_returnsCancelledResult() throws Exception {
+        PdfExportProcessRunner processRunner = mock(PdfExportProcessRunner.class);
+        when(processRunner.run(
+                anyList(),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class),
+                any(Duration.class),
+                anyString()
+        )).thenReturn(PdfExportProcessRunner.Outcome.cancelledOutcome());
+        var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), processRunner);
+
+        MermaidCliDiagramRenderer.Result result = subject.render("flowchart LR\nA --> B", tempDirectory, 0, 0, () -> false);
+
+        assertThat(result.cancelled()).isTrue();
+        assertThat(tempDirectory.resolve("mermaid-0-0.mmd")).doesNotExist();
     }
 
     @Test
@@ -473,6 +556,7 @@ class MermaidCliDiagramRendererTest {
                 1,
                 "Could not find Chrome (ver. 131); chrome-headless-shell is unavailable"
         ));
+        stubSupportedVersion(processRunner);
         var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), processRunner);
 
         MermaidCliDiagramRenderer.Result first = subject.render(
@@ -493,7 +577,7 @@ class MermaidCliDiagramRendererTest {
         assertThat(first.failure()).isEqualTo(MermaidCliDiagramRenderer.Failure.UNAVAILABLE);
         assertThat(second.failure()).isEqualTo(MermaidCliDiagramRenderer.Failure.UNAVAILABLE);
         verify(processRunner, times(1)).run(
-                anyList(),
+                argThat(command -> command.contains("--input")),
                 any(Path.class),
                 anyMap(),
                 any(BooleanSupplier.class),
@@ -502,21 +586,33 @@ class MermaidCliDiagramRendererTest {
         );
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"11.16.0", "12.0.0", "v12.0.1\n"})
+    @DisplayName("Mermaid CLI preflight accepts supported versions 11 and 12")
+    void unavailableReason_whenVersionIsSupported_acceptsCli(String version) throws Exception {
+        var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), versionRunner(version));
+
+        assertThat(subject.unavailableReason(() -> false)).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"10.9.0", "13.0.0"})
+    @DisplayName("Mermaid CLI preflight rejects untested major versions")
+    void unavailableReason_whenVersionIsUnsupported_returnsReason(String version) throws Exception {
+        var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), versionRunner(version));
+
+        assertThat(subject.unavailableReason(() -> false))
+                .hasValueSatisfying(reason -> assertThat(reason)
+                        .contains("11.x or 12.x")
+                        .contains("found %s.x".formatted(version.substring(0, 2))));
+    }
+
     @Test
-    @DisplayName("Mermaid CLI preflight accepts version 11 and rejects other major versions")
-    void unavailableReason_whenVersionIsChecked_enforcesSupportedMajor() throws Exception {
-        PdfExportProcessRunner supportedRunner = versionRunner("11.16.0");
-        PdfExportProcessRunner unsupportedRunner = versionRunner("12.0.1");
-        PdfExportProcessRunner malformedRunner = versionRunner("unknown version");
+    @DisplayName("Mermaid CLI preflight rejects unrecognized version output")
+    void unavailableReason_whenVersionIsMalformed_returnsReason() throws Exception {
+        var subject = new MermaidCliDiagramRenderer("mmdc", Map.of(), versionRunner("unknown version"));
 
-        var supported = new MermaidCliDiagramRenderer("mmdc", Map.of(), supportedRunner);
-        var unsupported = new MermaidCliDiagramRenderer("mmdc", Map.of(), unsupportedRunner);
-        var malformed = new MermaidCliDiagramRenderer("mmdc", Map.of(), malformedRunner);
-
-        assertThat(supported.unavailableReason(() -> false)).isEmpty();
-        assertThat(unsupported.unavailableReason(() -> false))
-                .hasValueSatisfying(reason -> assertThat(reason).contains("11.x").contains("12.x"));
-        assertThat(malformed.unavailableReason(() -> false))
+        assertThat(subject.unavailableReason(() -> false))
                 .hasValueSatisfying(reason -> assertThat(reason).contains("unrecognized version"));
     }
 
@@ -551,7 +647,19 @@ class MermaidCliDiagramRendererTest {
             writePng(outputPath(command), width, height);
             return PdfExportProcessRunner.Outcome.completed(0, "");
         });
+        stubSupportedVersion(processRunner);
         return processRunner;
+    }
+
+    private void stubSupportedVersion(PdfExportProcessRunner processRunner) throws Exception {
+        when(processRunner.run(
+                argThat(command -> command != null && command.contains("--version")),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class),
+                any(Duration.class),
+                anyString()
+        )).thenReturn(PdfExportProcessRunner.Outcome.completed(0, "11.16.0"));
     }
 
     private PdfExportProcessRunner versionRunner(String version) throws Exception {

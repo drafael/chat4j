@@ -637,7 +637,7 @@ class PandocConversationPdfExporterTest {
                 .contains("mermaid-1-0.png");
         assertThat(tempDirectory.resolve("mermaid-0-0.png")).isRegularFile();
         assertThat(tempDirectory.resolve("mermaid-1-0.png")).isRegularFile();
-        verify(processRunner, times(1)).run(
+        verify(processRunner, times(2)).run(
                 anyList(),
                 any(Path.class),
                 anyMap(),
@@ -1221,6 +1221,9 @@ class PandocConversationPdfExporterTest {
                 anyString()
         )).thenAnswer(invocation -> {
             List<String> command = invocation.getArgument(0);
+            if (command.contains("--version")) {
+                return PdfExportProcessRunner.Outcome.completed(0, "11.16.0");
+            }
             Path output = Path.of(command.get(command.indexOf("--output") + 1));
             Files.write(output, pngBytes(width, height));
             return PdfExportProcessRunner.Outcome.completed(0, "");

@@ -221,7 +221,7 @@ class PdfExportPanelTest {
             ));
             String mermaidTooltip = callOnEdt(mermaidCliPath::getToolTipText);
             assertThat(mermaidTooltip)
-                    .contains("Mermaid CLI 11.x")
+                    .contains("Mermaid CLI 11.x or 12.x")
                     .contains("shell launchers are unsupported");
             callOnEdt(() -> {
                 pandocPath.setText("/tools/pandoc-current");

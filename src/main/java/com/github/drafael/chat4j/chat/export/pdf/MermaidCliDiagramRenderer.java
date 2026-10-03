@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -65,6 +66,7 @@ final class MermaidCliDiagramRenderer {
     private final Map<String, String> environment;
     private final PdfExportProcessRunner processRunner;
     private boolean unavailable;
+    private String majorVersion;
     private Path preparedWorkspace;
 
     MermaidCliDiagramRenderer(
@@ -101,12 +103,14 @@ final class MermaidCliDiagramRenderer {
             }
             Matcher version = VERSION.matcher(outcome.diagnostics());
             if (!version.find()) {
-                return Optional.of("Mermaid CLI returned an unrecognized version; version 11.x is required.");
+                return Optional.of("Mermaid CLI returned an unrecognized version; version 11.x or 12.x is required.");
             }
             String detectedMajor = version.group(1);
-            return "11".equals(detectedMajor)
-                    ? Optional.empty()
-                    : Optional.of("Mermaid CLI version 11.x is required; found %s.x.".formatted(detectedMajor));
+            if (!"11".equals(detectedMajor) && !"12".equals(detectedMajor)) {
+                return Optional.of("Mermaid CLI version 11.x or 12.x is required; found %s.x.".formatted(detectedMajor));
+            }
+            majorVersion = detectedMajor;
+            return Optional.empty();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return Optional.of("Mermaid CLI version validation was interrupted.");
@@ -142,6 +146,23 @@ final class MermaidCliDiagramRenderer {
         }
         if (hasExternalResource(sourceText)) {
             return Result.failure(Failure.RESOURCE_REFERENCE);
+        }
+
+        if (majorVersion == null) {
+            Optional<String> reason = unavailableReason(cancelled);
+            if (cancelled.getAsBoolean()) {
+                return Result.cancelledResult();
+            }
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Mermaid CLI version validation was interrupted.");
+            }
+            if (reason.isPresent()) {
+                unavailable = true;
+                return Result.failure(Failure.UNAVAILABLE);
+            }
+            if (majorVersion == null) {
+                return Result.cancelledResult();
+            }
         }
 
         Path normalizedWorkspace = workspace.toAbsolutePath().normalize();
@@ -291,18 +312,20 @@ final class MermaidCliDiagramRenderer {
     }
 
     List<String> command(Path input, Path output, Path workspace) {
-        return List.of(
+        List<String> command = new ArrayList<>(List.of(
                 executable,
                 "--input", input.toString(),
                 "--output", output.toString(),
                 "--configFile", workspace.resolve(MERMAID_CONFIG_FILE).toString(),
                 "--puppeteerConfigFile", workspace.resolve(PUPPETEER_CONFIG_FILE).toString(),
-                "--backgroundColor", "white",
-                "--width", "1200",
-                "--height", "800",
-                "--scale", Integer.toString(OUTPUT_SCALE),
-                "--quiet"
-        );
+                "--backgroundColor", "white"
+        ));
+        // CLI 12 removed viewport flags; omit --size so small diagrams retain their natural size.
+        if ("11".equals(majorVersion)) {
+            command.addAll(List.of("--width", "1200", "--height", "800"));
+        }
+        command.addAll(List.of("--scale", Integer.toString(OUTPUT_SCALE), "--quiet"));
+        return List.copyOf(command);
     }
 
     DisplaySize displaySize(int pixelWidth) {

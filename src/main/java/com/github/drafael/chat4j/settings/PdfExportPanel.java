@@ -118,7 +118,7 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
         )), 360);
         mermaidCliPath.setName("pdfExportMermaidCliPathField");
         mermaidCliPath.setToolTipText(
-                "Optional Mermaid CLI 11.x executable, detected from PATH when unset; shell launchers are unsupported."
+                "Optional Mermaid CLI 11.x or 12.x executable, detected from PATH when unset; shell launchers are unsupported."
         );
         addRow(form, constraints, row++, "Mermaid CLI executable", executablePathRow(
                 mermaidCliPath,
@@ -146,7 +146,7 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
                 form,
                 constraints,
                 row,
-                "<html>Auto uses a ready active Chromium transcript when available and the offline built-in renderer otherwise.<br>Publication requires installed Pandoc and LaTeX tools. Mermaid CLI 11.x is optional.</html>"
+                "<html>Auto uses a ready active Chromium transcript when available and the offline built-in renderer otherwise.<br>Publication requires installed Pandoc and LaTeX tools. Mermaid CLI 11.x or 12.x is optional.</html>"
         );
         addVerticalSpacer(form, constraints, row);
 
