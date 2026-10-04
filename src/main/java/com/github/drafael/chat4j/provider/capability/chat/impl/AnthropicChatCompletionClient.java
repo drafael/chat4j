@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.capability.chat.impl;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+import com.anthropic.core.JsonValue;
 import com.anthropic.core.http.StreamResponse;
 import com.anthropic.models.messages.Base64ImageSource;
 import com.anthropic.models.messages.CitationsConfigParam;
@@ -11,9 +12,12 @@ import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.RawContentBlockDelta;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.ThinkingConfigAdaptive;
+import com.anthropic.models.messages.ThinkingConfigDisabled;
 import com.anthropic.models.messages.WebSearchTool20250305;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
@@ -34,10 +38,12 @@ import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.Proje
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedPart;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.provider.support.ClaudeReasoningSupport;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -157,9 +163,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
             paramsBuilder.systemOfTextBlockParams(systemBlocks);
         }
 
-        if (reasoningEnabled) {
-            paramsBuilder.enabledThinking(reasoningBudget(reasoningLevel));
-        }
+        configureThinking(paramsBuilder, runtime.selectedModel(), reasoningLevel, reasoningEnabled);
 
         if (webSearchOptions != null && webSearchOptions.enabled()) {
             paramsBuilder.addTool(WebSearchTool20250305.builder().build());
@@ -343,6 +347,55 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
     private boolean supportsNativeDocuments(ProviderRuntime runtime) {
         return ProviderCapabilityResolver.supportsFileInput(runtime.descriptor().capabilities());
+    }
+
+    private void configureThinking(
+            MessageCreateParams.Builder paramsBuilder,
+            String model,
+            ReasoningLevel reasoningLevel,
+            boolean reasoningEnabled
+    ) {
+        if (!ClaudeReasoningSupport.usesAdaptiveThinking(model)) {
+            if (reasoningEnabled) {
+                paramsBuilder.enabledThinking(reasoningBudget(reasoningLevel));
+            }
+            return;
+        }
+        if (reasoningEnabled) {
+            paramsBuilder.thinking(ThinkingConfigAdaptive.builder()
+                    .display(ThinkingConfigAdaptive.Display.SUMMARIZED)
+                    .build());
+            paramsBuilder.outputConfig(OutputConfig.builder().effort(reasoningEffort(model, reasoningLevel)).build());
+            return;
+        }
+
+        switch (model) {
+            case "claude-sonnet-5-5" -> {
+                // The SDK does not yet expose Sonnet 5.5's replacement for disabled thinking.
+                paramsBuilder.putAdditionalBodyProperty("thinking", JsonValue.from(Map.of("type", "between_tools")));
+            }
+            case "claude-sonnet-5", "claude-opus-5" -> paramsBuilder.thinking(ThinkingConfigDisabled.builder().build());
+            case "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1" -> {
+                // These models cannot disable thinking; minimize effort without displaying it.
+                paramsBuilder.thinking(ThinkingConfigAdaptive.builder()
+                        .display(ThinkingConfigAdaptive.Display.OMITTED)
+                        .build());
+            }
+            default -> {
+                return;
+            }
+        }
+        paramsBuilder.outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build());
+    }
+
+    private OutputConfig.Effort reasoningEffort(String model, ReasoningLevel reasoningLevel) {
+        return switch (reasoningLevel) {
+            case OFF, LOW -> OutputConfig.Effort.LOW;
+            case MEDIUM -> OutputConfig.Effort.MEDIUM;
+            case HIGH -> OutputConfig.Effort.HIGH;
+            case EXTRA_HIGH -> model.endsWith("-4-6") ? OutputConfig.Effort.MAX : OutputConfig.Effort.XHIGH;
+            case MAX, ULTRA -> OutputConfig.Effort.MAX;
+        };
     }
 
     int completionTokenLimit(ReasoningLevel reasoningLevel, boolean reasoningEnabled) {

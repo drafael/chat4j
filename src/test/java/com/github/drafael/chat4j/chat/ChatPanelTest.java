@@ -75,6 +75,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -1605,6 +1607,50 @@ class ChatPanelTest {
             subject.setSelectedModel("LocalTest > basic-model");
             assertThat(thinkingButton.isVisible()).isFalse();
             assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+        });
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "Anthropic, claude-sonnet-4-6, Off Low Medium High Max",
+            "Anthropic, claude-sonnet-5-5, Off Low Medium High Extra_High Max",
+            "Anthropic, claude-opus-5-5, Low Medium High Extra_High Max",
+            "OpenRouter, anthropic/claude-sonnet-4.6, Off Low Medium High Max",
+            "OpenRouter, anthropic/claude-sonnet-5.5:batch, Low Medium High Extra_High Max",
+            "OpenRouter, anthropic/claude-opus-5.5, Low Medium High Extra_High Max",
+            "Together, MiniMaxAI/MiniMax-M3, Off On",
+            "Together, moonshotai/Kimi-K3, Low High Max",
+            "Together, openai/gpt-oss-120b, Low Medium High",
+            "Together, deepseek-ai/DeepSeek-V4-Pro, Off High Max",
+            "Together, nvidia/nemotron-3-ultra-550b-a55b, Off Medium High"
+    })
+    @DisplayName("The composer menu follows provider-specific reasoning levels and mandatory thinking")
+    void setSelectedModel_whenReasoningPolicyVaries_updatesMenuAndEffectiveSelection(
+            String providerName,
+            String modelId,
+            String labels
+    ) throws Exception {
+        String baseUrl = providerName.equals("Together") ? "https://api.together.ai/v1" : null;
+        var provider = new ProviderRegistry.ProviderDef(
+                providerName, "TEST_API_KEY", baseUrl, baseUrl, List.of(modelId),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(providerName, provider));
+            subject.setSelectedModel("%s > %s".formatted(providerName, modelId));
+            InputBar inputBar = subject.getInputBar();
+            Field menuField = InputBar.class.getDeclaredField("reasoningLevelMenu");
+            menuField.setAccessible(true);
+            JPopupMenu menu = (JPopupMenu) menuField.get(inputBar);
+            assertThat(inputBar.isThinkingAvailable()).isTrue();
+            assertThat(Arrays.stream(menu.getComponents()).map(component -> ((JRadioButtonMenuItem) component).getText()))
+                    .containsExactlyElementsOf(Arrays.stream(labels.split(" ")).map(label -> label.replace('_', ' ')).toList());
+            assertThat(inputBar.getEffectiveReasoningLevel().enabled()).isEqualTo(!labels.startsWith("Off"));
+
+            inputBar.setReasoningLevel(ReasoningLevel.ULTRA);
+            JRadioButtonMenuItem lastItem = (JRadioButtonMenuItem) menu.getComponent(menu.getComponentCount() - 1);
+            assertThat(lastItem.isSelected()).isTrue();
+            assertThat(readThinkingButton(inputBar).getToolTipText()).isEqualTo("Reasoning: %s".formatted(lastItem.getText()));
         });
     }
 

@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -42,6 +43,8 @@ import com.openai.services.blocking.chat.ChatCompletionService;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Method;
@@ -984,6 +987,143 @@ class OpenAiChatCompletionClientTest {
         assertThat(shouldEmit).isFalse();
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "anthropic/claude-sonnet-5.5, MEDIUM, medium",
+            "anthropic/claude-sonnet-5.5, HIGH, high",
+            "anthropic/claude-opus-5.5, MEDIUM, medium",
+            "anthropic/claude-opus-5.5, HIGH, high",
+            "anthropic/claude-sonnet-5.5:online, HIGH, high",
+            "anthropic/claude-opus-5.5:batch, MEDIUM, medium",
+            "anthropic/claude-opus-4.7, HIGH, high",
+            "anthropic/claude-opus-4.8, MEDIUM, medium",
+            "anthropic/claude-sonnet-5, HIGH, high",
+            "anthropic/claude-opus-5, MEDIUM, medium",
+            "anthropic/claude-fable-5, HIGH, high",
+            "anthropic/claude-fable-5.1, MEDIUM, medium",
+            "anthropic/claude-sonnet-5.5, LOW, low",
+            "anthropic/claude-opus-5.5, EXTRA_HIGH, xhigh",
+            "anthropic/claude-opus-5.5, MAX, max",
+            "anthropic/claude-opus-5.5, ULTRA, max",
+            "anthropic/claude-sonnet-4.6, EXTRA_HIGH, max",
+            "anthropic/claude-opus-4.6:online, EXTRA_HIGH, max",
+            "anthropic/claude-haiku-4.5, MEDIUM, medium"
+    })
+    @DisplayName("OpenRouter Claude reasoning requests use explicit unified effort without native thinking fields")
+    void streamCompletion_whenOpenRouterClaudeUsesReasoning_sendsUnifiedEffort(
+            String model,
+            ReasoningLevel level,
+            String effort
+    ) throws Exception {
+        Map<?, ?> request = captureOpenRouterRequest(model, level);
+
+        assertThat(request.get("model")).isEqualTo(model);
+        assertThat(request.get("reasoning")).isEqualTo(Map.of("effort", effort, "exclude", false));
+        assertThat(request.get("reasoning_effort")).isNull();
+        assertThat(request.get("thinking")).isNull();
+        assertThat(request.get("output_config")).isNull();
+        assertThat(request.get("stream")).isEqualTo(true);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "anthropic/claude-sonnet-5.5, true",
+            "anthropic/claude-opus-5.5, true",
+            "anthropic/claude-opus-5.5:online, true",
+            "anthropic/claude-fable-5, true",
+            "anthropic/claude-fable-5.1, true",
+            "anthropic/claude-sonnet-5, false",
+            "anthropic/claude-opus-5, false",
+            "anthropic/claude-opus-4.8, false",
+            "anthropic/claude-opus-4.7, false",
+            "anthropic/claude-opus-4.6, false",
+            "anthropic/claude-sonnet-4.6, false",
+            "anthropic/claude-haiku-4.5, false"
+    })
+    @DisplayName("OpenRouter reasoning Off respects mandatory Claude reasoning and hides its trace")
+    void streamCompletion_whenOpenRouterClaudeReasoningIsOff_sendsSupportedMinimum(
+            String model,
+            boolean mandatory
+    ) throws Exception {
+        Map<?, ?> request = captureOpenRouterRequest(model, ReasoningLevel.OFF);
+
+        assertThat(request.get("reasoning")).isEqualTo(mandatory
+                ? Map.of("effort", "low", "exclude", true)
+                : Map.of("enabled", false));
+        assertThat(request.get("reasoning_effort")).isNull();
+        assertThat(request.get("thinking")).isNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"MEDIUM, medium", "HIGH, high", "OFF,"})
+    @DisplayName("Non-Claude OpenRouter models retain their existing OpenAI-style reasoning settings")
+    void streamCompletion_whenOpenRouterModelIsNotClaude_preservesExistingHints(ReasoningLevel level, String effort) throws Exception {
+        Map<?, ?> request = captureOpenRouterRequest("openai/gpt-5", level);
+
+        assertThat(request.get("reasoning_effort")).isEqualTo(effort);
+        assertThat(request.get("reasoning")).isNull();
+        assertThat(request.get("thinking")).isNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "MiniMaxAI/MiniMax-M3, MEDIUM,, true, false",
+            "MiniMaxAI/MiniMax-M3, HIGH,, true, false",
+            "moonshotai/Kimi-K3, MEDIUM, high,, false",
+            "moonshotai/Kimi-K3, HIGH, high,, false",
+            "moonshotai/Kimi-K2.6, MEDIUM,, true, false",
+            "moonshotai/Kimi-K2.6, HIGH,, true, false",
+            "Qwen/Qwen3.6-Plus, MEDIUM,, true, false",
+            "Qwen/Qwen3.6-Plus, HIGH,, true, false",
+            "Qwen/Qwen3.5-9B, MEDIUM,, true, false",
+            "Qwen/Qwen3.5-9B, HIGH,, true, false",
+            "deepcogito/cogito-v2-1-671b, MEDIUM,, true, false",
+            "deepcogito/cogito-v2-1-671b, HIGH,, true, false",
+            "openai/gpt-oss-120b, MEDIUM, medium,, false",
+            "openai/gpt-oss-120b, HIGH, high,, false",
+            "openai/gpt-oss-20b, MEDIUM, medium,, false",
+            "openai/gpt-oss-20b, HIGH, high,, false",
+            "deepseek-ai/DeepSeek-V4-Pro, MEDIUM, high,, false",
+            "deepseek-ai/DeepSeek-V4-Pro, HIGH, high,, false",
+            "zai-org/GLM-5.2, MEDIUM, high,, false",
+            "zai-org/GLM-5.2, HIGH, high,, false",
+            "nvidia/nemotron-3-ultra-550b-a55b, MEDIUM,, true, true",
+            "nvidia/nemotron-3-ultra-550b-a55b, HIGH,, true, false"
+    })
+    @DisplayName("Together Medium and High requests retain only each model's documented reasoning controls")
+    void streamWithChatCompletions_whenTogetherUsesMediumOrHigh_sendsProviderSpecificHints(
+            String model,
+            ReasoningLevel level,
+            String effort,
+            Boolean enabled,
+            boolean mediumEffort
+    ) throws Exception {
+        ChatCompletionCreateParams params = captureChatCompletionParams(
+                runtime("Together", model, "https://api.together.ai/v1"),
+                Message.user("question"),
+                level
+        );
+        Map<String, JsonValue> properties = params._additionalBodyProperties();
+
+        assertThat(params.reasoningEffort()).isEmpty();
+        assertThat(properties).doesNotContainKeys("thinking", "output_config");
+        if (effort == null) {
+            assertThat(properties).doesNotContainKey("reasoning_effort");
+        } else {
+            assertThat(jsonValue(properties, "reasoning_effort")).isEqualTo(effort);
+        }
+        if (enabled == null) {
+            assertThat(properties).doesNotContainKey("reasoning");
+        } else {
+            assertThat(jsonValue(properties, "reasoning")).isEqualTo(Map.of("enabled", enabled));
+        }
+        if (mediumEffort) {
+            assertThat(jsonValue(properties, "chat_template_kwargs")).isEqualTo(Map.of("medium_effort", true));
+        } else {
+            assertThat(properties).doesNotContainKey("chat_template_kwargs");
+        }
+    }
+
     @Test
     @DisplayName("Kimi K3 reasoning off uses the lowest supported effort")
     void applyChatCompletionsThinkingHints_whenKimiK3ReasoningIsOff_sendsLowEffort() throws Exception {
@@ -1206,9 +1346,60 @@ class OpenAiChatCompletionClientTest {
         assertThat(tokens).containsExactly("thinking");
     }
 
+    private Map<?, ?> captureOpenRouterRequest(String model, ReasoningLevel level) throws Exception {
+        var capturedRequest = new AtomicReference<Map<?, ?>>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            capturedRequest.set(JsonCodec.standard().read(exchange.getRequestBody().readAllBytes(), Map.class));
+            byte[] body = """
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"reasoning":"Checking the answer.","content":"Answer"},"finish_reason":"stop"}]}
+
+                    data: [DONE]
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        List<String> tokens = new ArrayList<>();
+        List<String> thinking = new ArrayList<>();
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            subject.streamCompletion(
+                    runtime("OpenRouter", model, endpoint),
+                    List.of(Message.user("question")),
+                    level,
+                    tokens::add,
+                    thinking::add,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+        } finally {
+            server.stop(0);
+        }
+        assertThat(tokens).containsExactly("Answer");
+        if (level.enabled()) {
+            assertThat(thinking).containsExactly("Checking the answer.");
+        } else {
+            assertThat(thinking).isEmpty();
+        }
+        assertThat(capturedRequest.get()).isNotNull();
+        return capturedRequest.get();
+    }
+
+    private ChatCompletionCreateParams captureChatCompletionParams(ProviderRuntime runtime, Message message) throws Exception {
+        return captureChatCompletionParams(runtime, message, ReasoningLevel.OFF);
+    }
+
     private ChatCompletionCreateParams captureChatCompletionParams(
             ProviderRuntime runtime,
-            Message message
+            Message message,
+            ReasoningLevel reasoningLevel
     ) throws Exception {
         boolean nativeImages = invokeSupportsNativeImages(runtime);
         AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
@@ -1238,7 +1429,7 @@ class OpenAiChatCompletionClientTest {
         when(delta._additionalProperties()).thenReturn(emptyMap());
         var captor = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
 
-        invokeStreamWithChatCompletions(runtime, plan, client);
+        invokeStreamWithChatCompletions(runtime, plan, client, reasoningLevel);
 
         verify(completions).createStreaming(captor.capture());
         return captor.getValue();
@@ -1284,7 +1475,8 @@ class OpenAiChatCompletionClientTest {
     private void invokeStreamWithChatCompletions(
             ProviderRuntime runtime,
             AttachmentProjectionPlan plan,
-            OpenAIClient client
+            OpenAIClient client,
+            ReasoningLevel reasoningLevel
     ) throws Exception {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
                 "streamWithChatCompletions",
@@ -1305,7 +1497,7 @@ class OpenAiChatCompletionClientTest {
                 runtime,
                 plan,
                 client,
-                ReasoningLevel.OFF,
+                reasoningLevel,
                 (Consumer<String>) ignored -> {
                 },
                 (Consumer<String>) ignored -> {

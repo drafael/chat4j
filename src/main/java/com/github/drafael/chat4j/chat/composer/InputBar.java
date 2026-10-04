@@ -748,9 +748,13 @@ public class InputBar extends JPanel {
             return ReasoningLevel.OFF;
         }
         return availableReasoningLevels.stream()
+                .filter(level -> !reasoningLevel.enabled() || level.enabled())
                 .filter(level -> level.ordinal() <= reasoningLevel.ordinal())
                 .max(ReasoningLevel::compareTo)
-                .orElse(ReasoningLevel.OFF);
+                .orElseGet(() -> availableReasoningLevels.stream()
+                        .filter(level -> !reasoningLevel.enabled() || level.enabled())
+                        .findFirst()
+                        .orElse(ReasoningLevel.OFF));
     }
 
     public void setAvailableReasoningLevels(List<ReasoningLevel> levels) {
@@ -758,14 +762,12 @@ public class InputBar extends JPanel {
                 ? ReasoningLevel.standardLevels()
                 : levels.stream()
                         .filter(Objects::nonNull)
-                        .filter(ReasoningLevel::enabled)
                         .distinct()
                         .sorted()
                         .toList();
-        List<ReasoningLevel> normalized = new ArrayList<>();
-        normalized.add(ReasoningLevel.OFF);
-        normalized.addAll(supportedLevels);
-        List<ReasoningLevel> immutableLevels = List.copyOf(normalized);
+        List<ReasoningLevel> immutableLevels = supportedLevels.isEmpty()
+                ? List.of(ReasoningLevel.OFF)
+                : supportedLevels;
         if (availableReasoningLevels.equals(immutableLevels)) {
             return;
         }
@@ -948,6 +950,9 @@ public class InputBar extends JPanel {
     }
 
     private String reasoningLabel(ReasoningLevel level) {
+        if (level.enabled() && availableReasoningLevels.stream().filter(ReasoningLevel::enabled).count() == 1) {
+            return "On";
+        }
         return switch (level) {
             case OFF -> "Off";
             case LOW -> "Low";
@@ -2639,7 +2644,7 @@ public class InputBar extends JPanel {
         thinkingButton.setSelected(selected);
         applyToolbarToggleSelection(thinkingButton, selected);
         thinkingButton.setIcon(thinkingIcon(tint));
-        thinkingButton.setToolTipText("Reasoning");
+        thinkingButton.setToolTipText("Reasoning: %s".formatted(reasoningLabel(effectiveReasoningLevel)));
         reasoningLevelItems.forEach((level, item) -> item.setSelected(level == effectiveReasoningLevel));
         revalidate();
         repaint();

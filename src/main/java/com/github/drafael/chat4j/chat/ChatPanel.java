@@ -74,6 +74,7 @@ import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
+import com.github.drafael.chat4j.provider.support.ClaudeReasoningSupport;
 import com.github.drafael.chat4j.provider.support.WebSearchSourceUrlNormalizer;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
@@ -2304,9 +2305,20 @@ public class ChatPanel extends JPanel {
         boolean initialSupportsTools = togetherProvider
                 ? TogetherModelSupport.supportsTools(providerDef.baseUrl(), modelId)
                 : ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId);
-        List<ReasoningLevel> availableReasoningLevels = modelCacheService
-                .findCodexReasoningLevels(providerName, modelId)
-                .orElse(ReasoningLevel.standardLevels());
+        List<ReasoningLevel> availableReasoningLevels;
+        if (togetherProvider) {
+            availableReasoningLevels = TogetherModelSupport.availableReasoningLevels(providerDef.baseUrl(), modelId);
+        } else if (Strings.CS.equals(providerName, "Anthropic")
+                || (Strings.CS.equals(providerName, "OpenRouter") && modelId.startsWith("anthropic/claude-"))) {
+            availableReasoningLevels = ClaudeReasoningSupport.availableLevels(
+                    modelId,
+                    Strings.CS.equals(providerName, "OpenRouter")
+            );
+        } else {
+            availableReasoningLevels = modelCacheService.findCodexReasoningLevels(providerName, modelId)
+                    .map(levels -> Stream.concat(Stream.of(ReasoningLevel.OFF), levels.stream()).distinct().toList())
+                    .orElse(ReasoningLevel.standardLevels());
+        }
         inputBar.setAvailableReasoningLevels(availableReasoningLevels);
         inputBar.setThinkingAvailable(initialSupportsThinking);
         applyNativeWebSearchOutcome(resolveCachedNativeWebSearchOutcome(providerDef, modelId));

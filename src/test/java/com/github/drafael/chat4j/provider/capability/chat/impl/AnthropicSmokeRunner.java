@@ -60,7 +60,8 @@ final class AnthropicSmokeRunner {
         details.add(modelListingSummary(models, resolvedModels));
         details.add(runBasicStreaming(resolvedModels.model()));
         details.add(runSystemPromptStreaming(resolvedModels.model()));
-        details.add(runReasoningStreaming(resolvedModels.reasoningModel()));
+        details.add(runReasoningStreaming(resolvedModels.reasoningModel(), ReasoningLevel.MEDIUM));
+        details.add(runReasoningStreaming(resolvedModels.reasoningModel(), ReasoningLevel.HIGH));
         details.add(runWebSearchStreaming(resolvedModels.webSearchModel()));
         details.add(runImageStreaming(resolvedModels.visionModel()));
         details.add(runCancellation(resolvedModels.model()));
@@ -159,21 +160,21 @@ final class AnthropicSmokeRunner {
         return "system prompt: %d character(s)".formatted(text.length());
     }
 
-    private String runReasoningStreaming(String model) throws Exception {
+    private String runReasoningStreaming(String model, ReasoningLevel reasoningLevel) throws Exception {
         StringBuilder thinking = new StringBuilder();
         String text = streamText(
                 model,
                 List.of(Message.user("Think briefly, then answer with exactly: reasoning smoke ok")),
-                ReasoningLevel.LOW,
+                reasoningLevel,
                 WebSearchRequestOptions.disabled(),
                 IGNORE_TOKEN,
                 thinking::append,
                 new AtomicBoolean(false)
         );
         requireContains(text, "reasoning", "reasoning response did not contain the smoke marker");
-        require(StringUtils.isNotBlank(thinking), "reasoning smoke produced no thinking tokens");
-        return "reasoning: %d response character(s), %d thinking character(s)"
-                .formatted(text.length(), thinking.length());
+        // Adaptive thinking can legitimately skip reasoning on this simple prompt.
+        return "reasoning (%s): %d response character(s), %d thinking character(s)"
+                .formatted(reasoningLevel.toSettingValue(), text.length(), thinking.length());
     }
 
     private String runWebSearchStreaming(String model) throws Exception {

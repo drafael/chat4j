@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -27,7 +30,9 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -88,6 +93,109 @@ class AnthropicChatCompletionClientTest {
         assertThat(subject.completionTokenLimit(ReasoningLevel.HIGH, true)).isEqualTo(8192);
         assertThat(subject.completionTokenLimit(ReasoningLevel.EXTRA_HIGH, true)).isEqualTo(12288);
         assertThat(subject.completionTokenLimit(ReasoningLevel.EXTRA_HIGH, false)).isEqualTo(4096);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "claude-sonnet-5-5, MEDIUM, medium, 6144",
+            "claude-sonnet-5-5, HIGH, high, 8192",
+            "claude-opus-5-5, MEDIUM, medium, 6144",
+            "claude-opus-5-5, HIGH, high, 8192",
+            "claude-sonnet-4-6, HIGH, high, 8192",
+            "claude-opus-4-6, MEDIUM, medium, 6144",
+            "claude-opus-4-7, HIGH, high, 8192",
+            "claude-opus-4-8, MEDIUM, medium, 6144",
+            "claude-sonnet-5, HIGH, high, 8192",
+            "claude-opus-5, MEDIUM, medium, 6144",
+            "claude-fable-5, MEDIUM, medium, 6144",
+            "claude-fable-5-1, HIGH, high, 8192",
+            "claude-sonnet-5-5, LOW, low, 5120",
+            "claude-sonnet-5-5, EXTRA_HIGH, xhigh, 12288",
+            "claude-opus-5-5, EXTRA_HIGH, xhigh, 12288",
+            "claude-opus-5-5, MAX, max, 12288",
+            "claude-opus-5-5, ULTRA, max, 12288",
+            "claude-sonnet-4-6, EXTRA_HIGH, max, 12288",
+            "claude-opus-4-6, EXTRA_HIGH, max, 12288"
+    })
+    @DisplayName("Recent Claude requests use adaptive thinking and explicit reasoning effort")
+    void streamCompletion_whenRecentModelUsesReasoning_sendsAdaptiveThinking(
+            String model,
+            ReasoningLevel reasoningLevel,
+            String effort,
+            int maxTokens
+    ) throws Exception {
+        List<String> thinking = new ArrayList<>();
+
+        Map<?, ?> request = captureRequest(model, reasoningLevel, thinking::add);
+
+        assertThat(request.get("model")).isEqualTo(model);
+        assertThat(request.get("thinking")).isEqualTo(Map.of("type", "adaptive", "display", "summarized"));
+        assertThat(request.get("output_config")).isEqualTo(Map.of("effort", effort));
+        assertThat(request.get("max_tokens")).isEqualTo(maxTokens);
+        assertThat(request.get("stream")).isEqualTo(true);
+        assertThat(thinking).containsExactly("Checking the answer.");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "claude-haiku-4-5-20251001, MEDIUM, 2048, 6144",
+            "claude-haiku-4-5-20251001, HIGH, 4096, 8192",
+            "claude-sonnet-4-5-20250929, MEDIUM, 2048, 6144",
+            "claude-sonnet-4-5-20250929, HIGH, 4096, 8192",
+            "claude-opus-4-5-20251101, MEDIUM, 2048, 6144",
+            "claude-opus-4-5-20251101, HIGH, 4096, 8192"
+    })
+    @DisplayName("Older Claude models retain supported manual thinking budgets")
+    void streamCompletion_whenLegacyModelUsesReasoning_preservesManualBudget(
+            String model,
+            ReasoningLevel reasoningLevel,
+            int budgetTokens,
+            int maxTokens
+    ) throws Exception {
+        Map<?, ?> request = captureRequest(model, reasoningLevel, ignored -> {
+        });
+
+        assertThat(request.get("thinking")).isEqualTo(Map.of("type", "enabled", "budget_tokens", budgetTokens));
+        assertThat(request.get("output_config")).isNull();
+        assertThat(request.get("max_tokens")).isEqualTo(maxTokens);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "claude-sonnet-5-5, between_tools,",
+            "claude-opus-5-5, adaptive, omitted",
+            "claude-fable-5, adaptive, omitted",
+            "claude-fable-5-1, adaptive, omitted",
+            "claude-sonnet-5, disabled,",
+            "claude-opus-5, disabled,",
+            "claude-opus-4-8,,",
+            "claude-opus-4-7,,",
+            "claude-opus-4-6,,",
+            "claude-sonnet-4-6,,",
+            "claude-haiku-4-5-20251001,,"
+    })
+    @DisplayName("Reasoning Off uses each model's supported minimum thinking configuration")
+    void streamCompletion_whenReasoningIsOff_usesModelSpecificConfiguration(
+            String model,
+            String thinkingType,
+            String display
+    ) throws Exception {
+        List<String> thinking = new ArrayList<>();
+
+        Map<?, ?> request = captureRequest(model, ReasoningLevel.OFF, thinking::add);
+
+        if (thinkingType == null) {
+            assertThat(request.get("thinking")).isNull();
+            assertThat(request.get("output_config")).isNull();
+        } else {
+            Map<String, String> expectedThinking = display == null
+                    ? Map.of("type", thinkingType)
+                    : Map.of("type", thinkingType, "display", display);
+            assertThat(request.get("thinking")).isEqualTo(expectedThinking);
+            assertThat(request.get("output_config")).isEqualTo(Map.of("effort", "low"));
+        }
+        assertThat(request.get("max_tokens")).isEqualTo(4096);
+        assertThat(thinking).isEmpty();
     }
 
     @Test
@@ -187,10 +295,50 @@ class AnthropicChatCompletionClientTest {
                 .hasMessage("Native Web Search is unavailable for this Anthropic model or endpoint.");
     }
 
+    private Map<?, ?> captureRequest(String model, ReasoningLevel reasoningLevel, Consumer<String> onThinkingToken) throws Exception {
+        var capturedRequest = new AtomicReference<Map<?, ?>>();
+        HttpServer server = startServer("""
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Checking the answer."}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Answer"}}
+
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """, body -> capturedRequest.set(JsonCodec.standard().read(body, Map.class)));
+        List<String> tokens = new ArrayList<>();
+        try {
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort()), model),
+                    List.of(Message.user("question")),
+                    reasoningLevel,
+                    tokens::add,
+                    onThinkingToken,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+        } finally {
+            server.stop(0);
+        }
+        assertThat(tokens).containsExactly("Answer");
+        assertThat(capturedRequest.get()).isNotNull();
+        return capturedRequest.get();
+    }
+
     private HttpServer startServer(String responseBody) throws Exception {
+        return startServer(responseBody, ignored -> {
+        });
+    }
+
+    private HttpServer startServer(String responseBody, Consumer<byte[]> onRequest) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/messages", exchange -> {
-            exchange.getRequestBody().readAllBytes();
+            onRequest.accept(exchange.getRequestBody().readAllBytes());
             byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, bytes.length);
@@ -228,6 +376,10 @@ class AnthropicChatCompletionClientTest {
     }
 
     private ProviderRuntime runtime(String baseUrl) {
+        return runtime(baseUrl, "claude-sonnet-4-6");
+    }
+
+    private ProviderRuntime runtime(String baseUrl, String model) {
         var descriptor = new ProviderDescriptor(
                 "Anthropic",
                 AuthType.ENV_VAR,
@@ -238,7 +390,7 @@ class AnthropicChatCompletionClientTest {
                 ProviderCapabilities.chatAndModels(),
                 value -> value
         );
-        return new ProviderRuntime(descriptor, "ANTHROPIC_API_KEY", baseUrl, "test-key", "claude-sonnet-4-6");
+        return new ProviderRuntime(descriptor, "ANTHROPIC_API_KEY", baseUrl, "test-key", model);
     }
 
     private AttachmentRef unavailableAttachment(String name) {

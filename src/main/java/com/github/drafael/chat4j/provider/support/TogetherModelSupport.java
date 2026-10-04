@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -127,6 +128,17 @@ public final class TogetherModelSupport {
 
     public static boolean supportsReasoning(String baseUrl, String modelId) {
         return reasoningMode(baseUrl, modelId) != ReasoningMode.NONE;
+    }
+
+    public static List<ReasoningLevel> availableReasoningLevels(String baseUrl, String modelId) {
+        return switch (reasoningMode(baseUrl, modelId)) {
+            case NONE -> List.of(ReasoningLevel.OFF);
+            case BINARY_HYBRID -> List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM);
+            case KIMI_K3 -> List.of(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX);
+            case GPT_OSS -> List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
+            case HIGH_MAX -> List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH, ReasoningLevel.MAX);
+            case NEMOTRON -> List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
+        };
     }
 
     private static ReasoningMode reasoningMode(String baseUrl, String modelId) {

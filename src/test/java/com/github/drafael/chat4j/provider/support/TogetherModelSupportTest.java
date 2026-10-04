@@ -3,8 +3,12 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -124,6 +128,34 @@ class TogetherModelSupportTest {
         assertThat(TogetherModelSupport.supportsVision("https://proxy.example/v1", "Qwen/Qwen3.5-9B")).isFalse();
         assertThat(TogetherModelSupport.supportsTools("https://proxy.example/v1", "Qwen/Qwen3.5-9B")).isFalse();
         assertThat(TogetherModelSupport.supportsReasoning("https://proxy.example/v1", "Qwen/Qwen3.5-9B")).isFalse();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "MiniMaxAI/MiniMax-M3, off medium",
+            "moonshotai/Kimi-K2.6, off medium",
+            "Qwen/Qwen3.6-Plus, off medium",
+            "Qwen/Qwen3.5-9B, off medium",
+            "deepcogito/cogito-v2-1-671b, off medium",
+            "moonshotai/Kimi-K3, low high max",
+            "openai/gpt-oss-120b, low medium high",
+            "openai/gpt-oss-20b, low medium high",
+            "deepseek-ai/DeepSeek-V4-Pro, off high max",
+            "zai-org/GLM-5.2, off high max",
+            "nvidia/nemotron-3-ultra-550b-a55b, off medium high",
+            "Qwen/new-model, off"
+    })
+    @DisplayName("Together's menu offers only distinct supported reasoning controls")
+    void availableReasoningLevels_whenModelVaries_matchesWireControls(String modelId, String settingValues) {
+        List<ReasoningLevel> expected = Stream.of(settingValues.split(" "))
+                .map(value -> ReasoningLevel.fromSettingValue(value, null))
+                .toList();
+        List<ReasoningLevel> levels = TogetherModelSupport.availableReasoningLevels(HOSTED_BASE_URL, modelId);
+        assertThat(levels).containsExactlyElementsOf(expected);
+        assertThat(levels.stream().map(level -> TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, modelId, level)))
+                .doesNotHaveDuplicates();
+        assertThat(TogetherModelSupport.availableReasoningLevels("https://proxy.example/v1", modelId))
+                .containsExactly(ReasoningLevel.OFF);
     }
 
     @Test

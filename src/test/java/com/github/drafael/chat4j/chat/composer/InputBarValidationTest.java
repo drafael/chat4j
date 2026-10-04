@@ -95,6 +95,62 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Mandatory reasoning omits Off and selects the lowest supported effort without losing the saved preference")
+    void setAvailableReasoningLevels_whenThinkingIsMandatory_selectsLowestSupportedLevel() throws Exception {
+        var subject = new InputBar();
+        try {
+            subject.setThinkingAvailable(true);
+            subject.setAvailableReasoningLevels(List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH));
+
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
+            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.LOW);
+            assertThat(readReasoningLevelItems(subject)).containsOnlyKeys(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
+            assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.LOW).isSelected()).isTrue();
+            assertThat(readThinkingButton(subject).getToolTipText()).isEqualTo("Reasoning: Low");
+
+            subject.setAvailableReasoningLevels(ReasoningLevel.standardLevels());
+            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("A saved Medium choice stays enabled when a model supports only High and Max")
+    void setAvailableReasoningLevels_whenMinimumEffortIsHigh_keepsReasoningEnabled() throws Exception {
+        var subject = new InputBar();
+        try {
+            subject.setThinkingAvailable(true);
+            subject.setReasoningLevel(ReasoningLevel.MEDIUM);
+            subject.setAvailableReasoningLevels(List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH, ReasoningLevel.MAX));
+
+            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.HIGH).isSelected()).isTrue();
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("Binary reasoning is labeled On instead of advertising an unsupported effort level")
+    void setAvailableReasoningLevels_whenControlIsBinary_displaysOnAndOff() throws Exception {
+        var subject = new InputBar();
+        try {
+            subject.setThinkingAvailable(true);
+            subject.setAvailableReasoningLevels(List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM));
+            assertThat(readReasoningLevelItems(subject).values()).extracting(JRadioButtonMenuItem::getText)
+                    .containsExactly("Off", "On");
+
+            readReasoningLevelItems(subject).get(ReasoningLevel.MEDIUM).doClick();
+            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            assertThat(readThinkingButton(subject).getToolTipText()).isEqualTo("Reasoning: On");
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
     @DisplayName("Agent toggle visibility follows tool capability and disables mode when unavailable")
     void setAgentModeAvailable_whenCapabilityChanges_updatesToggleVisibilityAndState() throws Exception {
         InputBar subject = new InputBar();

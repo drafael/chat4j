@@ -18,6 +18,7 @@ import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
+import com.github.drafael.chat4j.provider.support.ClaudeReasoningSupport;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
@@ -710,6 +711,12 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             return;
         }
 
+        if (Strings.CS.equals(runtime.descriptor().name(), "OpenRouter")
+                && Strings.CS.startsWith(runtime.selectedModel(), "anthropic/claude-")) {
+            applyOpenRouterClaudeReasoningHints(paramsBuilder, runtime.selectedModel(), reasoningLevel);
+            return;
+        }
+
         if (!reasoningLevel.enabled()) {
             return;
         }
@@ -720,6 +727,26 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         }
 
         toOpenAiReasoningEffort(reasoningLevel).ifPresent(paramsBuilder::reasoningEffort);
+    }
+
+    private void applyOpenRouterClaudeReasoningHints(
+            ChatCompletionCreateParams.Builder paramsBuilder,
+            String modelId,
+            ReasoningLevel reasoningLevel
+    ) {
+        String model = StringUtils.substringBefore(modelId, ":");
+        Map<String, Object> reasoning;
+        if (reasoningLevel.enabled()) {
+            String effort = reasoningLevel == ReasoningLevel.EXTRA_HIGH && model.endsWith("-4.6")
+                    ? "max"
+                    : toOpenAiReasoningEffort(reasoningLevel).orElseThrow().asString();
+            reasoning = Map.of("effort", effort, "exclude", false);
+        } else {
+            // OpenRouter marks Sonnet 5.5 as mandatory too, unlike Anthropic's between_tools mode.
+            boolean mandatory = ClaudeReasoningSupport.requiresThinking(model, true);
+            reasoning = mandatory ? Map.of("effort", "low", "exclude", true) : Map.of("enabled", false);
+        }
+        paramsBuilder.putAdditionalBodyProperty("reasoning", JsonValue.from(reasoning));
     }
 
     private void applyTogetherReasoningHints(
