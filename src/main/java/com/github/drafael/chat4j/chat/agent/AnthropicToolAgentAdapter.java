@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
+import com.github.drafael.chat4j.provider.support.ClaudeReasoningSupport;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 
 import static java.util.Collections.emptyList;
@@ -41,7 +43,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
     private final ProviderAttachmentSupport attachmentSupport;
     private final List<AgentToolDefinition> agentToolDefinitions;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
-    private List<Map<String, Object>> pendingToolUses = emptyList();
+    private List<Map<String, Object>> pendingAssistantContent = emptyList();
 
     AnthropicToolAgentAdapter(
             String modelId,
@@ -158,7 +160,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
-            if (!request.toolResults().isEmpty() && !pendingToolUses.isEmpty()) {
+            if (!request.toolResults().isEmpty() && !pendingAssistantContent.isEmpty()) {
                 appendToolExchange(request.toolResults());
             }
 
@@ -173,7 +175,8 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
             }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("model", modelId);
-            payload.put("max_tokens", 4096);
+            payload.put("max_tokens", 4096 + ClaudeReasoningSupport.budgetTokens(request.reasoningLevel()));
+            payload.putAll(ClaudeReasoningSupport.requestProperties(modelId, request.reasoningLevel()));
             payload.put("messages", buildMessages(projectionPlan));
             payload.put("tools", toolDefinitions());
             payload.put("tool_choice", Map.of("type", "auto"));
@@ -209,6 +212,12 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
                 return new AgentTurnResult(false, emptyList());
             }
             List<AnthropicAgentApi.ContentBlock> content = root.content() == null ? emptyList() : root.content();
+            if (request.reasoningLevel().enabled()) {
+                content.stream().filter(Objects::nonNull)
+                        .filter(block -> "thinking".equals(block.type()))
+                        .map(AnthropicAgentApi.ContentBlock::thinking).filter(StringUtils::isNotEmpty)
+                        .takeWhile(ignored -> !shouldStop(request)).forEach(callbacks.onThinkingToken());
+            }
             String assistantText = extractAssistantText(content);
             if (StringUtils.isNotBlank(assistantText) && !shouldStop(request)) {
                 callbacks.onToken().accept(assistantText);
@@ -219,11 +228,11 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
                 return new AgentTurnResult(false, emptyList());
             }
             if (!toolInvocations.isEmpty()) {
-                pendingToolUses = toPendingToolUses(content);
+                pendingAssistantContent = toAssistantContent(content);
                 return AgentTurnResult.continueWithTools(toolInvocations);
             }
 
-            pendingToolUses = emptyList();
+            pendingAssistantContent = emptyList();
             return AgentTurnResult.complete();
         } catch (CancellationException e) {
             return new AgentTurnResult(false, emptyList());
@@ -304,7 +313,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
     private void appendToolExchange(List<ToolInvocationResult> toolResults) {
         Map<String, Object> assistantMessage = new LinkedHashMap<>();
         assistantMessage.put("role", "assistant");
-        assistantMessage.put("content", pendingToolUses);
+        assistantMessage.put("content", pendingAssistantContent);
         toolExchangeMessages.add(assistantMessage);
 
         List<Map<String, Object>> toolResultBlocks = toolResults.stream()
@@ -326,7 +335,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         userMessage.put("content", toolResultBlocks);
         toolExchangeMessages.add(userMessage);
 
-        pendingToolUses = emptyList();
+        pendingAssistantContent = emptyList();
     }
 
     private String extractAssistantText(List<AnthropicAgentApi.ContentBlock> content) {
@@ -349,10 +358,10 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
                 .toList();
     }
 
-    private List<Map<String, Object>> toPendingToolUses(List<AnthropicAgentApi.ContentBlock> content) {
+    private List<Map<String, Object>> toAssistantContent(List<AnthropicAgentApi.ContentBlock> content) {
         return content.stream()
-                .filter(block -> block != null && Strings.CS.equals(block.type(), "tool_use"))
-                .map(AnthropicAgentApi.ContentBlock::asToolUseMap)
+                .filter(Objects::nonNull)
+                .map(AnthropicAgentApi.ContentBlock::fields)
                 .toList();
     }
 

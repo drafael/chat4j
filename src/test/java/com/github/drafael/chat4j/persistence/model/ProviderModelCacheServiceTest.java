@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.persistence.model;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -37,7 +38,7 @@ class ProviderModelCacheServiceTest {
     private Path tempDir;
 
     @Test
-    @DisplayName("Priming from disk loads cached provider models into memory")
+    @DisplayName("Priming from disk loads supported models and removes retired GPT-4o entries")
     void primeFromDisk_whenProviderHasCachedModels_loadsModelsIntoMemory() {
         var cache = new InMemoryModelCache();
         cache.put("OpenAI", Instant.parse("2026-04-10T10:00:00Z"), List.of("gpt-4.1", "gpt-4o"));
@@ -46,7 +47,51 @@ class ProviderModelCacheServiceTest {
 
         subject.primeFromDisk(List.of("OpenAI"));
 
-        assertThat(subject.getModels("OpenAI")).containsExactly("gpt-4.1", "gpt-4o");
+        assertThat(subject.getModels("OpenAI")).containsExactly("gpt-4.1");
+    }
+
+    @Test
+    @DisplayName("Startup priming loads local Codex efforts before saved selections are normalized")
+    void primeFromDisk_codexEffortsOverrideBuiltins_loadsLocalMetadata() {
+        var subject = new ProviderModelCacheService(
+                new InMemoryModelCache(), Clock.systemUTC(), Duration.ofHours(12), false,
+                () -> new CodexLocalModelCache.Snapshot(
+                        List.of("gpt-5.5"), emptyList(),
+                        Map.of("gpt-5.5", List.of(ReasoningLevel.HIGH, ReasoningLevel.MAX))
+                )
+        );
+
+        subject.primeFromDisk(List.of("OpenAI Codex"));
+
+        assertThat(subject.findCodexReasoningOptions("OpenAI Codex", "gpt-5.5"))
+                .contains(ReasoningOptions.of(List.of(ReasoningLevel.HIGH, ReasoningLevel.MAX)));
+    }
+
+    @Test
+    @DisplayName("Failed initial Codex reads remain unresolved; later failures preserve initialized last-good metadata")
+    void refreshCodexLocalModels_initialFailureThenRecovery_tracksSuccessfulPublication() {
+        var snapshot = new AtomicReference<>(new CodexLocalModelCache.Snapshot(emptyList(), emptyList(), false));
+        var subject = new ProviderModelCacheService(
+                new InMemoryModelCache(), Clock.systemUTC(), Duration.ofHours(12), false, snapshot::get
+        );
+        assertThat(subject.isCodexLocalModelsLoaded()).isFalse();
+
+        subject.primeFromDisk(List.of("OpenAI Codex"));
+        assertThat(subject.isCodexLocalModelsLoaded()).isFalse();
+
+        snapshot.set(new CodexLocalModelCache.Snapshot(
+                List.of("opaque-model"), emptyList(), Map.of("opaque-model", List.of(ReasoningLevel.MAX))
+        ));
+        subject.refreshCodexLocalModels();
+        assertThat(subject.isCodexLocalModelsLoaded()).isTrue();
+        assertThat(subject.findCodexReasoningOptions("OpenAI Codex", "opaque-model"))
+                .contains(ReasoningOptions.of(List.of(ReasoningLevel.MAX)));
+
+        snapshot.set(new CodexLocalModelCache.Snapshot(emptyList(), emptyList(), false));
+        subject.refreshCodexLocalModels();
+        assertThat(subject.isCodexLocalModelsLoaded()).isTrue();
+        assertThat(subject.findCodexReasoningOptions("OpenAI Codex", "opaque-model"))
+                .contains(ReasoningOptions.of(List.of(ReasoningLevel.MAX)));
     }
 
     @Test
@@ -133,12 +178,12 @@ class ProviderModelCacheServiceTest {
 
         var subject = new ProviderModelCacheService(cache, fixedClock("2026-04-10T10:30:00Z"), Duration.ofHours(12));
 
-        assertThat(subject.getModels("OpenAI")).containsExactly("gpt-4.1", "gpt-4o");
+        assertThat(subject.getModels("OpenAI")).containsExactly("gpt-4.1");
         assertThat(subject.shouldRefresh("OpenAI", Duration.ofHours(12))).isFalse();
 
         subject.invalidate("OpenAI");
 
-        assertThat(subject.getModels("OpenAI")).containsExactly("gpt-4.1", "gpt-4o");
+        assertThat(subject.getModels("OpenAI")).containsExactly("gpt-4.1");
         assertThat(subject.shouldRefresh("OpenAI", Duration.ofHours(12))).isTrue();
         assertThat(cache.lastWriteProvider).isEqualTo("OpenAI");
         assertThat(cache.lastWriteTimestamp).isEqualTo(Instant.EPOCH);
@@ -757,7 +802,7 @@ class ProviderModelCacheServiceTest {
     @DisplayName("The authoritative Codex catalog filters every selector path and survives failed reads")
     void getModels_whenCodexCatalogIsAuthoritative_excludesRemoteAndSeedModels() {
         var localModels = new AtomicReference<>(new CodexLocalModelCache.Snapshot(
-                List.of("gpt-6-astra"), emptyList(), emptyMap(), true, true
+                List.of("gpt-6-astra"), emptyList(), emptyMap(), emptyMap(), true, true
         ));
         var cache = new InMemoryModelCache();
         cache.writeCache(
@@ -791,7 +836,7 @@ class ProviderModelCacheServiceTest {
 
     @Test
     @DisplayName("OpenAI Codex reasoning levels are published with the successful local snapshot")
-    void findCodexReasoningLevels_whenLocalSnapshotRefreshes_returnsModelMetadata() {
+    void findCodexReasoningOptions_whenLocalSnapshotRefreshes_returnsModelMetadata() {
         var subject = new ProviderModelCacheService(
                 new InMemoryModelCache(),
                 fixedClock("2026-04-10T11:00:00Z"),
@@ -800,15 +845,16 @@ class ProviderModelCacheServiceTest {
                 () -> new CodexLocalModelCache.Snapshot(
                         List.of("gpt-5.6-sol"),
                         emptyList(),
-                        Map.of("gpt-5.6-sol", List.of(ReasoningLevel.LOW, ReasoningLevel.MAX, ReasoningLevel.ULTRA))
+                        Map.of("gpt-5.6-sol", List.of(ReasoningLevel.LOW, ReasoningLevel.MAX, ReasoningLevel.ULTRA)),
+                        Map.of("gpt-5.6-sol", ReasoningLevel.MAX), true, true
                 )
         );
 
         subject.refreshCodexLocalModels();
 
-        assertThat(subject.findCodexReasoningLevels("OpenAI Codex", "gpt-5.6-sol"))
-                .contains(List.of(ReasoningLevel.LOW, ReasoningLevel.MAX, ReasoningLevel.ULTRA));
-        assertThat(subject.findCodexReasoningLevels("OpenAI", "gpt-5.6-sol")).isEmpty();
+        assertThat(subject.findCodexReasoningOptions("OpenAI Codex", "gpt-5.6-sol"))
+                .contains(ReasoningOptions.of(List.of(ReasoningLevel.LOW, ReasoningLevel.MAX, ReasoningLevel.ULTRA), ReasoningLevel.MAX));
+        assertThat(subject.findCodexReasoningOptions("OpenAI", "gpt-5.6-sol")).isEmpty();
     }
 
     @Test
@@ -901,7 +947,7 @@ class ProviderModelCacheServiceTest {
         SwingUtilities.invokeAndWait(() -> models.set(subject.getModels("OpenAI Codex")));
 
         assertThat(supplierCalls).hasValue(0);
-        assertThat(models.get()).contains("gpt-5.4");
+        assertThat(models.get()).contains("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna");
     }
 
     @Test

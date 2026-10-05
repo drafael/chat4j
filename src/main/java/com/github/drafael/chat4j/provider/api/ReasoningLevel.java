@@ -7,6 +7,7 @@ import java.util.Locale;
 
 public enum ReasoningLevel {
     OFF,
+    MINIMAL,
     LOW,
     MEDIUM,
     HIGH,
@@ -29,6 +30,7 @@ public enum ReasoningLevel {
     public String toSettingValue() {
         return switch (this) {
             case OFF -> "off";
+            case MINIMAL -> "minimal";
             case LOW -> "low";
             case MEDIUM -> "medium";
             case HIGH -> "high";
@@ -49,6 +51,7 @@ public enum ReasoningLevel {
 
         return switch (normalized) {
             case "off", "none" -> OFF;
+            case "minimal" -> MINIMAL;
             case "low" -> LOW;
             case "medium" -> MEDIUM;
             case "high" -> HIGH;

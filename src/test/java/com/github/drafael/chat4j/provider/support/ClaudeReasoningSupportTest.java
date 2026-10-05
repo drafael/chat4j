@@ -5,10 +5,22 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ClaudeReasoningSupportTest {
+
+    @ParameterizedTest
+    @CsvSource({
+            "claude-sonnet-4-6, MEDIUM", "anthropic/claude-sonnet-4.6:batch, MEDIUM",
+            "claude-opus-5-5, MEDIUM", "claude-sonnet-5-5, HIGH", "claude-opus-4-6, HIGH",
+            "claude-opus-4-8, HIGH", "claude-fable-5-1, HIGH", "claude-3-7-sonnet, MEDIUM"
+    })
+    @DisplayName("Claude defaults follow general-purpose recommendations without changing legacy budget controls")
+    void recommendedLevel_knownModel_usesDocumentedRecommendation(String model, ReasoningLevel expected) {
+        assertThat(ClaudeReasoningSupport.recommendedLevel(model)).isEqualTo(expected);
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {"claude-sonnet-4-6", "claude-opus-4-6", "anthropic/claude-sonnet-4.6:batch", "anthropic/claude-opus-4.6"})

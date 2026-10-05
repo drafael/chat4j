@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
 import com.github.drafael.chat4j.http.JavaNetHttpTransport;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -24,6 +25,8 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -39,6 +42,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -56,6 +60,47 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 class GoogleAiGenerateContentClientTest {
+
+    @ParameterizedTest
+    @CsvSource({
+            "gemini-2.5-flash, OFF, 0,",
+            "gemini-2.5-flash, LOW, 1024,",
+            "gemini-2.5-flash, MEDIUM, 8192,",
+            "gemini-2.5-flash, HIGH, 24576,",
+            "gemini-3.1-pro-preview, LOW,, low",
+            "gemini-3.1-pro-preview, HIGH,, high",
+            "gemini-3.1-flash-image-preview, MINIMAL,, minimal",
+            "gemini-3.1-flash-image-preview, HIGH,, high"
+    })
+    @DisplayName("Native Google search requests encode the selected thinking budget or level")
+    void streamCompletion_selectedReasoning_encodesNativeThinking(String model, ReasoningLevel level, Integer budget, String thinkingLevel) throws Exception {
+        var requestBody = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1beta/models/%s:generateContent".formatted(model), exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Answer\"}]},\"finishReason\":\"STOP\"}]}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var subject = new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient(ProviderAttachmentTestSupport.authority()),
+                    new JavaNetHttpTransport(HttpClient.newHttpClient()), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
+            var tokens = new ArrayList<String>();
+            subject.streamCompletion(runtime("http://127.0.0.1:%d/v1beta/openai".formatted(server.getAddress().getPort()), model),
+                    List.of(Message.user("Reply OK.")), level, new WebSearchRequestOptions(!model.contains("image")), tokens::add,
+                    ignored -> { }, ignored -> { }, ignored -> { }, () -> false, ignored -> { }, () -> { });
+            Map<?, ?> request = JsonCodec.standard().read(requestBody.get(), Map.class);
+            Map<?, ?> config = (Map<?, ?>) ((Map<?, ?>) request.get("generationConfig")).get("thinkingConfig");
+            assertThat(config.get("thinkingBudget")).isEqualTo(budget);
+            assertThat(config.get("thinkingLevel")).isEqualTo(thinkingLevel);
+            assertThat(config.get("includeThoughts")).isEqualTo(level.enabled());
+            assertThat(tokens).containsExactly("Answer");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Image model detection includes Gemini image preview models")
@@ -474,7 +519,7 @@ class GoogleAiGenerateContentClientTest {
                     });
             assertThat(requestBody.get())
                     .contains("\"google_search\":{}")
-                    .contains("\"thinkingConfig\":{\"includeThoughts\":true}")
+                    .contains("\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingBudget\":24576}")
                     .doesNotContain("responseModalities");
         } finally {
             server.stop(0);

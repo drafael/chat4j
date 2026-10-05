@@ -12,12 +12,9 @@ import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
-import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.RawContentBlockDelta;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
-import com.anthropic.models.messages.ThinkingConfigAdaptive;
-import com.anthropic.models.messages.ThinkingConfigDisabled;
 import com.anthropic.models.messages.WebSearchTool20250305;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
@@ -43,7 +40,6 @@ import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -355,66 +351,16 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
             ReasoningLevel reasoningLevel,
             boolean reasoningEnabled
     ) {
-        if (!ClaudeReasoningSupport.usesAdaptiveThinking(model)) {
-            if (reasoningEnabled) {
-                paramsBuilder.enabledThinking(reasoningBudget(reasoningLevel));
-            }
-            return;
-        }
-        if (reasoningEnabled) {
-            paramsBuilder.thinking(ThinkingConfigAdaptive.builder()
-                    .display(ThinkingConfigAdaptive.Display.SUMMARIZED)
-                    .build());
-            paramsBuilder.outputConfig(OutputConfig.builder().effort(reasoningEffort(model, reasoningLevel)).build());
-            return;
-        }
-
-        switch (model) {
-            case "claude-sonnet-5-5" -> {
-                // The SDK does not yet expose Sonnet 5.5's replacement for disabled thinking.
-                paramsBuilder.putAdditionalBodyProperty("thinking", JsonValue.from(Map.of("type", "between_tools")));
-            }
-            case "claude-sonnet-5", "claude-opus-5" -> paramsBuilder.thinking(ThinkingConfigDisabled.builder().build());
-            case "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1" -> {
-                // These models cannot disable thinking; minimize effort without displaying it.
-                paramsBuilder.thinking(ThinkingConfigAdaptive.builder()
-                        .display(ThinkingConfigAdaptive.Display.OMITTED)
-                        .build());
-            }
-            default -> {
-                return;
-            }
-        }
-        paramsBuilder.outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build());
-    }
-
-    private OutputConfig.Effort reasoningEffort(String model, ReasoningLevel reasoningLevel) {
-        return switch (reasoningLevel) {
-            case OFF, LOW -> OutputConfig.Effort.LOW;
-            case MEDIUM -> OutputConfig.Effort.MEDIUM;
-            case HIGH -> OutputConfig.Effort.HIGH;
-            case EXTRA_HIGH -> model.endsWith("-4-6") ? OutputConfig.Effort.MAX : OutputConfig.Effort.XHIGH;
-            case MAX, ULTRA -> OutputConfig.Effort.MAX;
-        };
+        ClaudeReasoningSupport.requestProperties(model, reasoningEnabled ? reasoningLevel : ReasoningLevel.OFF)
+                .forEach((name, value) -> paramsBuilder.putAdditionalBodyProperty(name, JsonValue.from(value)));
     }
 
     int completionTokenLimit(ReasoningLevel reasoningLevel, boolean reasoningEnabled) {
-        return MAX_ANSWER_TOKENS + (reasoningEnabled ? reasoningBudget(reasoningLevel) : 0);
-    }
-
-    private int reasoningBudget(ReasoningLevel reasoningLevel) {
-        return switch (reasoningLevel) {
-            case OFF -> 0;
-            case LOW -> 1024;
-            case MEDIUM -> 2048;
-            case HIGH -> 4096;
-            case EXTRA_HIGH, MAX, ULTRA -> 8192;
-        };
+        return MAX_ANSWER_TOKENS + (reasoningEnabled ? ClaudeReasoningSupport.budgetTokens(reasoningLevel) : 0);
     }
 
     private boolean supportsReasoning(ProviderRuntime runtime) {
         return ProviderCapabilityResolver.supportsReasoning(
-                runtime.descriptor().capabilities(),
                 runtime.descriptor().name(),
                 runtime.selectedModel()
         );

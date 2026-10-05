@@ -53,7 +53,8 @@ final class GoogleAiApi {
     record GenerationConfig(List<String> responseModalities, ThinkingConfig thinkingConfig) {
     }
 
-    record ThinkingConfig(boolean includeThoughts) {
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ThinkingConfig(boolean includeThoughts, Integer thinkingBudget, String thinkingLevel) {
     }
 
     record Tool(@JsonProperty("google_search") GoogleSearch googleSearch) {

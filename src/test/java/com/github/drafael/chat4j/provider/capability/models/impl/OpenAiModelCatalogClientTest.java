@@ -195,7 +195,7 @@ class OpenAiModelCatalogClientTest {
             List<String> firstModels = subject.fetchModels(runtime);
             List<String> secondModels = subject.fetchModels(runtime);
 
-            assertThat(firstModels).contains("gpt-5.4", "gpt-5.4-mini", "gpt-4o");
+            assertThat(firstModels).contains("gpt-5.4", "gpt-5.4-mini").doesNotContain("gpt-4o");
             assertThat(firstModels).doesNotContain("gpt-3.5-turbo", "claude-messages-only");
             assertThat(secondModels).isEqualTo(firstModels);
             assertThat(tokenExchangeCalls.get()).isEqualTo(1);
@@ -345,7 +345,7 @@ class OpenAiModelCatalogClientTest {
         server.createContext("/models", exchange -> {
             authorizationHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
             String body = """
-                    {"data":[{"id":"gpt-4o","supported_endpoints":["/chat/completions"]}]}
+                    {"data":[{"id":"gpt-4.1","supported_endpoints":["/chat/completions"]}]}
                     """;
             byte[] payload = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -388,10 +388,10 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).contains("gpt-4o");
+            assertThat(models).contains("gpt-4.1");
             assertThat(authorizationHeader).hasValue("Bearer %s".formatted(sessionToken));
             assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini")).isEmpty();
-            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-4o"))
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-4.1"))
                     .containsExactly("/chat/completions");
         } finally {
             server.stop(0);
@@ -646,7 +646,7 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).contains("gpt-5.4", "gpt-4o", "gpt-4o-mini");
+            assertThat(models).contains("gpt-5.4", "gpt-4o-mini").doesNotContain("gpt-4o");
             assertThat(models).doesNotContain("gpt-4o-2024-11-20", "gpt-4o-mini-2024-07-18", "gpt-3.5-turbo");
         } finally {
             server.stop(0);
@@ -699,7 +699,7 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).contains("gpt-4o", "gpt-4o-mini");
+            assertThat(models).contains("gpt-4o-mini").doesNotContain("gpt-4o");
             assertThat(models).doesNotContain("gpt-4o-2024-11-20", "gpt-4o-mini-2024-07-18", "gpt-3.5-turbo");
         } finally {
             server.stop(0);
@@ -781,7 +781,7 @@ class OpenAiModelCatalogClientTest {
                             {
                               "object": "list",
                               "data": [
-                                {"id":"gpt-4o","object":"model","created":1,"owned_by":"openai"}
+                                {"id":"gpt-5.5","object":"model","created":1,"owned_by":"openai"}
                               ]
                             }
                             """).getBytes(StandardCharsets.UTF_8);
@@ -814,7 +814,7 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).containsExactly("gpt-4o");
+            assertThat(models).containsExactly("gpt-5.5");
             assertThat(requests).hasValue(2);
         } finally {
             server.stop(0);

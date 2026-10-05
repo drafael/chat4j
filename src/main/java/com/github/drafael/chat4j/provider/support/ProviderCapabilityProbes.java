@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
 import com.github.drafael.chat4j.json.JsonCodec;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.apache.commons.lang3.StringUtils;
 
 import java.net.URI;
@@ -68,8 +69,7 @@ final class ProviderCapabilityProbes {
         }
 
         return fetchJson(modelsEndpoint(normalizedBaseUrl), provider, apiKey)
-                .flatMap(payload -> ProviderCapabilityJsonParser.modelsEvidence(payload, modelId))
-                .flatMap(ProviderCapabilityJsonParser.CapabilityEvidence::nativeWebSearch);
+                .flatMap(payload -> ProviderCapabilityJsonParser.modelsNativeWebSearchSupport(payload, modelId));
     }
 
     static Optional<Boolean> probeLmStudioToolSupport(
@@ -179,6 +179,25 @@ final class ProviderCapabilityProbes {
         return fetchJson(lmStudioModelsEndpoint(normalizedBaseUrl), provider, apiKey)
                 .flatMap(payload -> ProviderCapabilityJsonParser.lmStudioEvidence(payload, modelId))
                 .flatMap(evidence -> evidence.explicitVision().or(evidence::image));
+    }
+
+    static LocalReasoningMetadata probeLocalReasoningOptions(String baseUrl, String modelId, String provider, String apiKey) {
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+        if (containsAny(provider, OLLAMA_PROVIDER_HINTS)) {
+            try {
+                return postJson(ollamaShowEndpoint(normalizedBaseUrl), modelId, provider, apiKey)
+                        .map(ProviderCapabilityJsonParser::ollamaReasoningOptions)
+                        .orElse(LocalReasoningMetadata.UNRESOLVED);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return LocalReasoningMetadata.UNRESOLVED;
+            } catch (Exception e) {
+                return LocalReasoningMetadata.UNRESOLVED;
+            }
+        }
+        return fetchJson(lmStudioModelsEndpoint(normalizedBaseUrl), provider, apiKey)
+                .map(payload -> ProviderCapabilityJsonParser.lmStudioReasoningOptions(payload, modelId))
+                .orElse(LocalReasoningMetadata.UNRESOLVED);
     }
 
     static Optional<Boolean> probeLmStudioReasoningSupport(
@@ -296,8 +315,10 @@ final class ProviderCapabilityProbes {
     ) {
         try {
             return postJson(ollamaShowEndpoint(normalizedBaseUrl), modelId, provider, apiKey)
-                    .flatMap(ProviderCapabilityJsonParser::nodeEvidence)
-                    .flatMap(ProviderCapabilityJsonParser.CapabilityEvidence::reasoning);
+                    .flatMap(payload -> ProviderCapabilityJsonParser.ollamaReasoningOptions(payload).options()
+                            .map(options -> options.levels().stream().anyMatch(ReasoningLevel::enabled))
+                            .or(() -> ProviderCapabilityJsonParser.nodeEvidence(payload)
+                                    .flatMap(ProviderCapabilityJsonParser.CapabilityEvidence::reasoning)));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return Optional.empty();

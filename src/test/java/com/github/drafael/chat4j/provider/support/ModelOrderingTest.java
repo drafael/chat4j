@@ -187,7 +187,7 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("Copilot model IDs filter deprecated GPT-3.5 and dated GPT-4o aliases when canonical models exist")
+    @DisplayName("Copilot catalogs exclude retired GPT-4o and GPT-3.5 while retaining canonical GPT-4o mini")
     void sanitizeAndSortByProvider_whenProviderIsCopilot_filtersLegacyAliases() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByProvider("GitHub Copilot", List.of(
                 "gpt-4o-mini-2024-07-18",
@@ -199,10 +199,6 @@ class ModelOrderingTest {
                 "gpt-5.4"
         ));
 
-        assertThat(sorted).containsExactly(
-                "gpt-5.4",
-                "gpt-4o-mini",
-                "gpt-4o"
-        );
+        assertThat(sorted).containsExactly("gpt-5.4", "gpt-4o-mini");
     }
 }

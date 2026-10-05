@@ -10,6 +10,7 @@ class ReasoningLevelTest {
 
     @ParameterizedTest
     @CsvSource({
+            "minimal, MINIMAL",
             "extra_high, EXTRA_HIGH",
             "xhigh, EXTRA_HIGH",
             "max, MAX",
@@ -23,6 +24,7 @@ class ReasoningLevelTest {
 
     @ParameterizedTest
     @CsvSource({
+            "MINIMAL, minimal",
             "EXTRA_HIGH, extra_high",
             "MAX, max",
             "ULTRA, ultra"

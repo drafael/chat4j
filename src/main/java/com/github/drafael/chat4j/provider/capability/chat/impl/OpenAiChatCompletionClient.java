@@ -18,7 +18,7 @@ import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
-import com.github.drafael.chat4j.provider.support.ClaudeReasoningSupport;
+import com.github.drafael.chat4j.provider.support.OpenAiReasoningSupport;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
@@ -56,6 +56,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -474,9 +475,17 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                             return;
                         }
                         terminalChoiceObserved |= choice.finishReason().isPresent();
-                        choice.delta().content()
-                                .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
-                                .ifPresent(trackedOnToken);
+                        Optional<MistralConversationsApi.Content> mistralContent = Strings.CS.equals(runtime.descriptor().name(), "Mistral")
+                                ? choice.delta()._content().asUnknown().map(value -> value.convert(MistralConversationsApi.Content.class))
+                                : Optional.empty();
+                        if (mistralContent.isPresent()) {
+                            emitMistralContent(mistralContent.get(), trackedOnToken,
+                                    attemptLevel.enabled() ? trackedOnThinkingToken : ignored -> { }, isCancelled);
+                        } else {
+                            choice.delta().content()
+                                    .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
+                                    .ifPresent(trackedOnToken);
+                        }
                         if (shouldStop(isCancelled)) {
                             return;
                         }
@@ -511,6 +520,23 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             } finally {
                 clearActiveStream.run();
             }
+        }
+    }
+
+    private void emitMistralContent(MistralConversationsApi.Content content, Consumer<String> onToken, Consumer<String> onThinkingToken, BooleanSupplier isCancelled) {
+        if (content == null || shouldStop(isCancelled)) {
+            return;
+        }
+        switch (content) {
+            case MistralConversationsApi.Chunks chunks -> chunks.values()
+                    .forEach(chunk -> emitMistralContent(chunk, onToken, onThinkingToken, isCancelled));
+            case MistralConversationsApi.Thinking thinking ->
+                    emitMistralContent(thinking.value(), onThinkingToken, onThinkingToken, isCancelled);
+            case MistralConversationsApi.Text text -> Optional.ofNullable(text.value())
+                    .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta).ifPresent(onToken);
+            case MistralConversationsApi.TextValue text -> Optional.ofNullable(text.value())
+                    .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta).ifPresent(onToken);
+            default -> { }
         }
     }
 
@@ -650,7 +676,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         ResponseCreateParams.Builder paramsBuilder = ResponseCreateParams.builder()
                 .model(runtime.selectedModel())
                 .inputOfResponse(input);
-        applyResponsesReasoningHints(paramsBuilder, reasoningLevel);
+        applyResponsesReasoningHints(paramsBuilder, runtime, reasoningLevel);
         if (webSearchEnabled) {
             paramsBuilder.addTool(WebSearchTool.builder()
                     .type(WebSearchTool.Type.WEB_SEARCH)
@@ -711,42 +737,14 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             return;
         }
 
-        if (Strings.CS.equals(runtime.descriptor().name(), "OpenRouter")
-                && Strings.CS.startsWith(runtime.selectedModel(), "anthropic/claude-")) {
-            applyOpenRouterClaudeReasoningHints(paramsBuilder, runtime.selectedModel(), reasoningLevel);
-            return;
-        }
-
-        if (!reasoningLevel.enabled()) {
-            return;
-        }
-
-        if (shouldEnableOllamaThinking(runtime)) {
-            paramsBuilder.putAdditionalBodyProperty("think", JsonValue.from(true));
-            return;
-        }
-
-        toOpenAiReasoningEffort(reasoningLevel).ifPresent(paramsBuilder::reasoningEffort);
-    }
-
-    private void applyOpenRouterClaudeReasoningHints(
-            ChatCompletionCreateParams.Builder paramsBuilder,
-            String modelId,
-            ReasoningLevel reasoningLevel
-    ) {
-        String model = StringUtils.substringBefore(modelId, ":");
-        Map<String, Object> reasoning;
-        if (reasoningLevel.enabled()) {
-            String effort = reasoningLevel == ReasoningLevel.EXTRA_HIGH && model.endsWith("-4.6")
-                    ? "max"
-                    : toOpenAiReasoningEffort(reasoningLevel).orElseThrow().asString();
-            reasoning = Map.of("effort", effort, "exclude", false);
-        } else {
-            // OpenRouter marks Sonnet 5.5 as mandatory too, unlike Anthropic's between_tools mode.
-            boolean mandatory = ClaudeReasoningSupport.requiresThinking(model, true);
-            reasoning = mandatory ? Map.of("effort", "low", "exclude", true) : Map.of("enabled", false);
-        }
-        paramsBuilder.putAdditionalBodyProperty("reasoning", JsonValue.from(reasoning));
+        OpenAiReasoningSupport.properties(runtime.descriptor().name(), runtime.selectedModel(), runtime.baseUrl(), runtime.apiKey(), reasoningLevel)
+                .forEach((name, value) -> {
+                    if (name.equals("reasoning_effort")) {
+                        paramsBuilder.reasoningEffort(ReasoningEffort.of((String) value));
+                    } else {
+                        paramsBuilder.putAdditionalBodyProperty(name, JsonValue.from(value));
+                    }
+                });
     }
 
     private void applyTogetherReasoningHints(
@@ -776,8 +774,11 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         }
     }
 
-    private void applyResponsesReasoningHints(ResponseCreateParams.Builder paramsBuilder, ReasoningLevel reasoningLevel) {
+    private void applyResponsesReasoningHints(ResponseCreateParams.Builder paramsBuilder, ProviderRuntime runtime, ReasoningLevel reasoningLevel) {
         if (!reasoningLevel.enabled()) {
+            if (ProviderCapabilityResolver.supportsExplicitReasoningOff(runtime.descriptor().name(), runtime.selectedModel())) {
+                paramsBuilder.reasoning(Reasoning.builder().effort(ReasoningEffort.NONE).build());
+            }
             return;
         }
 
@@ -787,25 +788,27 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     }
 
     private Optional<ReasoningEffort> toOpenAiReasoningEffort(ReasoningLevel reasoningLevel) {
-        return switch (reasoningLevel) {
-            case OFF -> Optional.empty();
-            case LOW -> Optional.of(ReasoningEffort.LOW);
-            case MEDIUM -> Optional.of(ReasoningEffort.MEDIUM);
-            case HIGH -> Optional.of(ReasoningEffort.HIGH);
-            case EXTRA_HIGH -> Optional.of(ReasoningEffort.XHIGH);
-            case MAX, ULTRA -> Optional.of(ReasoningEffort.MAX);
-        };
+        return reasoningLevel.enabled() ? Optional.of(ReasoningEffort.of(OpenAiReasoningSupport.effort(reasoningLevel))) : Optional.empty();
     }
 
     private List<ReasoningLevel> reasoningAttempts(ProviderRuntime runtime, ReasoningLevel reasoningLevel) {
-        return TogetherModelSupport.isTogether(runtime.descriptor().name())
-                ? List.of(reasoningLevel)
-                : reasoningAttempts(reasoningLevel);
+        if (TogetherModelSupport.isTogether(runtime.descriptor().name())) {
+            return List.of(reasoningLevel);
+        }
+        List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
+        if (reasoningLevel == ReasoningLevel.ULTRA && Strings.CS.equalsAny(runtime.descriptor().name(), "Ollama", "LM Studio")) {
+            var localAttempts = new ArrayList<ReasoningLevel>();
+            localAttempts.add(reasoningLevel);
+            localAttempts.addAll(attempts);
+            return List.copyOf(localAttempts);
+        }
+        return attempts;
     }
 
     private List<ReasoningLevel> reasoningAttempts(ReasoningLevel reasoningLevel) {
         return switch (reasoningLevel) {
             case OFF -> List.of(ReasoningLevel.OFF);
+            case MINIMAL -> List.of(ReasoningLevel.MINIMAL, ReasoningLevel.OFF);
             case LOW -> List.of(ReasoningLevel.LOW, ReasoningLevel.OFF);
             case MEDIUM -> List.of(ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
             case HIGH -> List.of(ReasoningLevel.HIGH, ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
@@ -866,20 +869,6 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private static boolean shouldEmitOutputDelta(String delta) {
         return StringUtils.isNotEmpty(delta);
-    }
-
-    private boolean shouldEnableOllamaThinking(ProviderRuntime runtime) {
-        if (!Strings.CS.equals(runtime.descriptor().name(), "Ollama")) {
-            return false;
-        }
-
-        return ProviderCapabilityResolver.supportsReasoning(
-                runtime.descriptor().capabilities(),
-                runtime.descriptor().name(),
-                runtime.selectedModel(),
-                runtime.baseUrl(),
-                runtime.apiKey()
-        );
     }
 
     private void emitChatCompletionsThinkingDelta(ChatCompletionChunk.Choice choice, Consumer<String> onThinkingToken) {

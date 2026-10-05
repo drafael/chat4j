@@ -1927,6 +1927,8 @@ public class MainFrame extends JFrame {
         }
 
         if (applied) {
+            ReasoningLevel savedReasoningLevel = ReasoningLevel.fromSettingValue(conversation.reasoningLevel(), null);
+            chatPanel.getInputBar().setReasoningLevel(savedReasoningLevel);
             pendingLoadConversationId = null;
             chatPanel.setConversationLoading(false);
             chatPanel.commitConversationRuntimeLoad(conversationId, requestId);
@@ -1936,10 +1938,12 @@ public class MainFrame extends JFrame {
                 clearedConversationIds.remove(conversationId);
             }
             applyCurrentRenderMode();
-            chatPanel.getInputBar().setReasoningLevel(ReasoningLevel.fromSettingValue(
-                    conversation.reasoningLevel(),
-                    ReasoningLevel.OFF
-            ));
+            if (!chatPanel.getInputBar().isReasoningPending()) {
+                ReasoningLevel selectedReasoningLevel = chatPanel.getInputBar().getReasoningLevel();
+                if (selectedReasoningLevel != savedReasoningLevel) {
+                    persistCurrentConversationReasoningLevel(selectedReasoningLevel);
+                }
+            }
             finishSidebarRecoveryDelivery(conversationId);
         }
     }
@@ -2694,7 +2698,9 @@ public class MainFrame extends JFrame {
     }
 
     private void onReasoningLevelChanged(ReasoningLevel reasoningLevel) {
-        persistCurrentConversationReasoningLevel(reasoningLevel);
+        if (!chatPanel.isConversationRuntimeLoadStaged()) {
+            persistCurrentConversationReasoningLevel(reasoningLevel);
+        }
     }
 
     private void applyAgentModeSettings() {

@@ -14,6 +14,7 @@ import com.github.drafael.chat4j.chat.ui.InputComposerShellPanel;
 import com.github.drafael.chat4j.chat.ui.InputIconButton;
 import com.github.drafael.chat4j.chat.ui.InputIconToggleButton;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
 import com.sun.jna.Callback;
@@ -42,7 +43,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,9 +55,11 @@ import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.JTextComponent;
+import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.Validate;
 import static java.util.Collections.emptyList;
 
 public class InputBar extends JPanel {
@@ -147,8 +149,7 @@ public class InputBar extends JPanel {
     private final List<Consumer<Path>> agentProjectRootListeners = new ArrayList<>();
     private boolean sendOnEnter = true;
     private ReasoningLevel reasoningLevel = ReasoningLevel.OFF;
-    private List<ReasoningLevel> availableReasoningLevels = ReasoningLevel.standardLevels();
-    private boolean thinkingAvailable = false;
+    private ReasoningOptions reasoningOptions = ReasoningOptions.UNAVAILABLE;
     private boolean webSearchAvailable = false;
     private boolean webSearchEnabled = false;
     private boolean webSearchLockedEnabled = false;
@@ -690,7 +691,8 @@ public class InputBar extends JPanel {
     }
 
     public boolean isSendable() {
-        return normalComposeMode && !conversationBusy && !isRecordingOrTranscribing() && providerReady && !getComposerState().isEmpty();
+        return normalComposeMode && !conversationBusy && !isRecordingOrTranscribing()
+                && !isReasoningPending() && providerReady && !getComposerState().isEmpty();
     }
 
     private void recomputeComposerPresentation() {
@@ -707,7 +709,7 @@ public class InputBar extends JPanel {
         sendButton.setEnabled(isSendable());
         attachButton.setEnabled(isEnabled() && isComposerMutable());
         commandCenterButton.setEnabled(isEnabled() && isComposerMutable());
-        thinkingButton.setEnabled(isEnabled() && isComposerMutable());
+        thinkingButton.setEnabled(isEnabled() && isComposerMutable() && !isReasoningPending());
         webSearchButton.setEnabled(
                 isEnabled() && isComposerMutable() && webSearchAvailable && !webSearchLockedEnabled
         );
@@ -731,70 +733,51 @@ public class InputBar extends JPanel {
         }
     }
 
-    public boolean isThinkingEnabled() {
-        return getEffectiveReasoningLevel().enabled();
-    }
-
-    public void setThinkingEnabled(boolean thinkingEnabled) {
-        setReasoningLevel(thinkingEnabled ? ReasoningLevel.MEDIUM : ReasoningLevel.OFF);
-    }
-
     public ReasoningLevel getReasoningLevel() {
+        Validate.validState(!isReasoningPending(), "Reasoning options have not been resolved yet");
         return reasoningLevel;
     }
 
-    public ReasoningLevel getEffectiveReasoningLevel() {
-        if (!thinkingAvailable) {
-            return ReasoningLevel.OFF;
-        }
-        return availableReasoningLevels.stream()
-                .filter(level -> !reasoningLevel.enabled() || level.enabled())
-                .filter(level -> level.ordinal() <= reasoningLevel.ordinal())
-                .max(ReasoningLevel::compareTo)
-                .orElseGet(() -> availableReasoningLevels.stream()
-                        .filter(level -> !reasoningLevel.enabled() || level.enabled())
-                        .findFirst()
-                        .orElse(ReasoningLevel.OFF));
+    public boolean isReasoningPending() {
+        return reasoningOptions == null;
     }
 
-    public void setAvailableReasoningLevels(List<ReasoningLevel> levels) {
-        List<ReasoningLevel> supportedLevels = levels == null
-                ? ReasoningLevel.standardLevels()
-                : levels.stream()
-                        .filter(Objects::nonNull)
-                        .distinct()
-                        .sorted()
-                        .toList();
-        List<ReasoningLevel> immutableLevels = supportedLevels.isEmpty()
-                ? List.of(ReasoningLevel.OFF)
-                : supportedLevels;
-        if (availableReasoningLevels.equals(immutableLevels)) {
-            return;
-        }
-
-        availableReasoningLevels = immutableLevels;
+    public void beginReasoningRefresh() {
+        reasoningOptions = null;
         reasoningLevelMenu.setVisible(false);
         initializeReasoningLevelMenu();
         updateThinkingTogglePresentation();
+        recomputeComposerPresentation();
     }
 
-    public void setReasoningLevel(ReasoningLevel reasoningLevel) {
-        ReasoningLevel normalized = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
-        if (this.reasoningLevel == normalized) {
+    public void setReasoningOptions(@NonNull ReasoningOptions options) {
+        if (options.equals(reasoningOptions)) {
             return;
         }
-
-        this.reasoningLevel = normalized;
+        ReasoningLevel previous = reasoningLevel;
+        reasoningOptions = options;
+        reasoningLevel = reasoningLevel == null ? options.defaultLevel() : options.select(reasoningLevel);
+        reasoningLevelMenu.setVisible(false);
+        initializeReasoningLevelMenu();
         updateThinkingTogglePresentation();
+        recomputeComposerPresentation();
+        if (previous != reasoningLevel) {
+            notifyReasoningLevelChanged(reasoningLevel);
+        }
     }
 
-    public void setThinkingAvailable(boolean thinkingAvailable) {
-        this.thinkingAvailable = thinkingAvailable;
+    /** Restores a saved selection without emitting a user/settings event. */
+    public void setReasoningLevel(ReasoningLevel reasoningLevel) {
+        if (isReasoningPending()) {
+            this.reasoningLevel = reasoningLevel;
+            return;
+        }
+        ReasoningLevel selected = reasoningLevel == null ? reasoningOptions.defaultLevel() : reasoningOptions.select(reasoningLevel);
+        if (this.reasoningLevel == selected) {
+            return;
+        }
+        this.reasoningLevel = selected;
         updateThinkingTogglePresentation();
-    }
-
-    public boolean isThinkingAvailable() {
-        return thinkingAvailable;
     }
 
     public boolean isWebSearchAvailable() {
@@ -915,11 +898,13 @@ public class InputBar extends JPanel {
     }
 
     private void initializeReasoningLevelMenu() {
-        ButtonGroup buttonGroup = new ButtonGroup();
-
         reasoningLevelMenu.removeAll();
         reasoningLevelItems.clear();
-        for (ReasoningLevel level : availableReasoningLevels) {
+        if (isReasoningPending()) {
+            return;
+        }
+        ButtonGroup buttonGroup = new ButtonGroup();
+        for (ReasoningLevel level : reasoningOptions.levels()) {
             JRadioButtonMenuItem item = new JRadioButtonMenuItem(reasoningLabel(level));
             item.addActionListener(e -> {
                 ReasoningLevel previousLevel = this.reasoningLevel;
@@ -935,7 +920,7 @@ public class InputBar extends JPanel {
     }
 
     private void toggleReasoningSelector() {
-        if (!thinkingAvailable) {
+        if (isReasoningPending() || reasoningOptions.levels().size() < 2) {
             return;
         }
 
@@ -944,17 +929,17 @@ public class InputBar extends JPanel {
             return;
         }
 
-        ReasoningLevel effectiveReasoningLevel = getEffectiveReasoningLevel();
-        reasoningLevelItems.forEach((level, item) -> item.setSelected(level == effectiveReasoningLevel));
+        reasoningLevelItems.forEach((level, item) -> item.setSelected(level == reasoningLevel));
         reasoningLevelMenu.show(thinkingButton, 0, -reasoningLevelMenu.getPreferredSize().height - 4);
     }
 
     private String reasoningLabel(ReasoningLevel level) {
-        if (level.enabled() && availableReasoningLevels.stream().filter(ReasoningLevel::enabled).count() == 1) {
+        if (level.enabled() && reasoningOptions.levels().size() == 2 && reasoningOptions.levels().contains(ReasoningLevel.OFF)) {
             return "On";
         }
         return switch (level) {
             case OFF -> "Off";
+            case MINIMAL -> "Minimal";
             case LOW -> "Low";
             case MEDIUM -> "Medium";
             case HIGH -> "High";
@@ -2625,18 +2610,11 @@ public class InputBar extends JPanel {
             return;
         }
 
-        ReasoningLevel effectiveReasoningLevel = getEffectiveReasoningLevel();
-        boolean reasoningEnabled = effectiveReasoningLevel.enabled();
-
-        thinkingButton.setVisible(thinkingAvailable && !isRecordingOrTranscribing());
-        if (!thinkingAvailable) {
-            thinkingButton.setSelected(false);
-            applyToolbarToggleSelection(thinkingButton, false);
-            thinkingButton.setToolTipText(null);
+        boolean reasoningEnabled = !isReasoningPending() && reasoningLevel.enabled();
+        boolean selectable = !isReasoningPending() && reasoningOptions.levels().size() > 1;
+        thinkingButton.setVisible(selectable && !isRecordingOrTranscribing());
+        if (!selectable) {
             reasoningLevelMenu.setVisible(false);
-            revalidate();
-            repaint();
-            return;
         }
 
         Color tint = resolveInputIconTint(reasoningEnabled);
@@ -2644,8 +2622,9 @@ public class InputBar extends JPanel {
         thinkingButton.setSelected(selected);
         applyToolbarToggleSelection(thinkingButton, selected);
         thinkingButton.setIcon(thinkingIcon(tint));
-        thinkingButton.setToolTipText("Reasoning: %s".formatted(reasoningLabel(effectiveReasoningLevel)));
-        reasoningLevelItems.forEach((level, item) -> item.setSelected(level == effectiveReasoningLevel));
+        thinkingButton.setToolTipText(isReasoningPending() ? "Checking reasoning options…"
+                : "Reasoning: %s".formatted(reasoningLabel(reasoningLevel)));
+        reasoningLevelItems.forEach((level, item) -> item.setSelected(level == reasoningLevel));
         revalidate();
         repaint();
     }

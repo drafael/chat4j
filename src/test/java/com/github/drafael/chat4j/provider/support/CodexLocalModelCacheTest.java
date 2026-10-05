@@ -7,6 +7,8 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -14,6 +16,33 @@ class CodexLocalModelCacheTest {
 
     @TempDir
     private Path tempDir;
+
+    @ParameterizedTest
+    @CsvSource({"high,HIGH", "low,LOW", "max,MEDIUM", "none,MEDIUM", "future,MEDIUM", "'',MEDIUM"})
+    @DisplayName("Codex recommendations apply only when recognized and supported")
+    void readSnapshot_localRecommendation_usesSupportedDefault(String recommendation, ReasoningLevel expected) throws Exception {
+        Path codexDirectory = Files.createDirectories(tempDir.resolve(".codex"));
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {"models":[{"slug":"gpt-6-astra","default_reasoning_level":"%s",
+                  "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}
+                """.formatted(recommendation));
+
+        var subject = CodexLocalModelCache.readSnapshot(tempDir).reasoningOptions("gpt-6-astra").orElseThrow();
+
+        assertThat(subject.defaultLevel()).isEqualTo(expected);
+        assertThat(subject.select(ReasoningLevel.OFF)).isEqualTo(expected);
+        assertThat(subject.select(ReasoningLevel.HIGH)).isEqualTo(ReasoningLevel.HIGH);
+    }
+
+    @Test
+    @DisplayName("Bundled Codex defaults use the verified model recommendation without replacing a supported selection")
+    void builtinSnapshot_verifiedRecommendations_usesLowForAstraAndSol61() {
+        var subject = CodexLocalModelCache.builtinSnapshot();
+        assertThat(subject.reasoningOptions("gpt-6-astra").orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.LOW);
+        assertThat(subject.reasoningOptions("gpt-6.1-sol").orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.LOW);
+        assertThat(subject.reasoningOptions("gpt-6-luna").orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+        assertThat(subject.reasoningOptions("gpt-6-astra").orElseThrow().select(ReasoningLevel.HIGH)).isEqualTo(ReasoningLevel.HIGH);
+    }
 
     @Test
     @DisplayName("Codex local cache parser reads model slugs and removes duplicates")
@@ -94,7 +123,11 @@ class CodexLocalModelCacheTest {
         CodexLocalModelCache.Snapshot snapshot = CodexLocalModelCache.readSnapshot(tempDir);
 
         assertThat(snapshot.loadedSuccessfully()).isTrue();
-        assertThat(snapshot.models()).contains("gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna");
+        assertThat(snapshot.models()).containsExactlyInAnyOrder(
+                "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
+                "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"
+        );
+        assertThat(snapshot.reasoningLevelsByModel()).containsOnlyKeys(snapshot.models());
         assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.5")).containsExactly(
                 ReasoningLevel.LOW,
                 ReasoningLevel.MEDIUM,
@@ -109,8 +142,12 @@ class CodexLocalModelCacheTest {
                 ReasoningLevel.MAX,
                 ReasoningLevel.ULTRA
         );
-        assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.6-terra"))
-                .isEqualTo(snapshot.reasoningLevelsByModel().get("gpt-5.6-sol"));
+        List.of("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-terra").forEach(model ->
+                assertThat(snapshot.reasoningLevelsByModel().get(model))
+                        .as("Supported efforts for %s", model)
+                        .isEqualTo(snapshot.reasoningLevelsByModel().get("gpt-5.6-sol")));
+        assertThat(snapshot.reasoningLevelsByModel().get("gpt-6-luna"))
+                .isEqualTo(snapshot.reasoningLevelsByModel().get("gpt-5.6-luna"));
         assertThat(snapshot.reasoningLevelsByModel().get("gpt-5.6-luna")).containsExactly(
                 ReasoningLevel.LOW,
                 ReasoningLevel.MEDIUM,
@@ -118,6 +155,23 @@ class CodexLocalModelCacheTest {
                 ReasoningLevel.EXTRA_HIGH,
                 ReasoningLevel.MAX
         );
+    }
+
+    @Test
+    @DisplayName("Account-specific GPT-6 efforts override the bundled Codex fallback")
+    void readSnapshot_gpt6LocalEffortsPresent_overridesBuiltinLevels() throws Exception {
+        Path codexDirectory = Files.createDirectories(tempDir.resolve(".codex"));
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {"models":[{"slug":"gpt-6-astra","visibility":"list",
+                  "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}
+                """);
+
+        var subject = CodexLocalModelCache.readSnapshot(tempDir);
+
+        assertThat(subject.models()).containsExactly("gpt-6-astra");
+        assertThat(subject.reasoningLevelsByModel()).containsOnlyKeys("gpt-6-astra");
+        assertThat(subject.reasoningLevelsByModel().get("gpt-6-astra"))
+                .containsExactly(ReasoningLevel.LOW, ReasoningLevel.HIGH);
     }
 
     @Test
@@ -156,6 +210,30 @@ class CodexLocalModelCacheTest {
                 ReasoningLevel.ULTRA
         );
         assertThat(snapshot.reasoningLevelsByModel()).doesNotContainKey("hidden-codex");
+    }
+
+    @Test
+    @DisplayName("An unrecognized nonempty effort list is not authoritative evidence of unavailable reasoning")
+    void readSnapshot_allEffortsUnrecognized_reportsUnsuccessfulRead() throws Exception {
+        Path codexDirectory = Files.createDirectories(tempDir.resolve(".codex"));
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {"models":[{"slug":"future-codex","supported_reasoning_levels":[{"effort":"future"}]}]}
+                """);
+
+        assertThat(CodexLocalModelCache.readSnapshot(tempDir).loadedSuccessfully()).isFalse();
+    }
+
+    @Test
+    @DisplayName("An explicitly empty effort list remains distinct from unrecognized efforts")
+    void readSnapshot_emptyEffortList_preservesExplicitEmptyMetadata() throws Exception {
+        Path codexDirectory = Files.createDirectories(tempDir.resolve(".codex"));
+        Files.writeString(codexDirectory.resolve("models_cache.json"), """
+                {"models":[{"slug":"plain-codex","supported_reasoning_levels":[]}]}
+                """);
+
+        var snapshot = CodexLocalModelCache.readSnapshot(tempDir);
+        assertThat(snapshot.loadedSuccessfully()).isTrue();
+        assertThat(snapshot.reasoningLevelsByModel()).containsEntry("plain-codex", List.of());
     }
 
     @Test

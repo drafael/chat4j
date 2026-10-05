@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -8,7 +9,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Exact hosted-serverless and capability snapshots reviewed on 2026-08-15.
+ * Hosted-serverless and capability snapshots reviewed on 2026-08-15;
+ * Kimi K3 and DeepSeek V4 Pro 0813 reasoning controls updated on 2026-10-04.
  *
  * @see <a href="https://docs.together.ai/docs/serverless/models">Together serverless models</a>
  * @see <a href="https://docs.together.ai/docs/inference/vision/overview">Together vision</a>
@@ -22,6 +24,7 @@ public final class TogetherModelSupport {
     private static final String DEFAULT_BASE_URL = "https://api.together.ai/v1";
 
     private static final String DEEPSEEK_V4_PRO = "deepseek-ai/DeepSeek-V4-Pro";
+    private static final String DEEPSEEK_V4_PRO_0813 = "deepseek-ai/DeepSeek-V4-Pro-0813";
     private static final String GLM_5_2 = "zai-org/GLM-5.2";
     private static final String KIMI_K3 = "moonshotai/Kimi-K3";
     private static final String NEMOTRON_3_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b";
@@ -40,6 +43,7 @@ public final class TogetherModelSupport {
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             DEEPSEEK_V4_PRO,
+            DEEPSEEK_V4_PRO_0813,
             "deepseek-ai/DeepSeek-V4-Flash-0731",
             NEMOTRON_3_ULTRA,
             "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -85,6 +89,7 @@ public final class TogetherModelSupport {
     private static final Set<String> REASONING_MODELS = Set.of(
             "MiniMaxAI/MiniMax-M3",
             DEEPSEEK_V4_PRO,
+            DEEPSEEK_V4_PRO_0813,
             GLM_5_2,
             KIMI_K3,
             "moonshotai/Kimi-K2.6",
@@ -101,7 +106,7 @@ public final class TogetherModelSupport {
             "openai/gpt-oss-20b"
     );
 
-    private static final Set<String> HIGH_MAX_MODELS = Set.of(DEEPSEEK_V4_PRO, GLM_5_2);
+    private static final Set<String> HIGH_MAX_MODELS = Set.of(DEEPSEEK_V4_PRO, DEEPSEEK_V4_PRO_0813, GLM_5_2);
 
     private TogetherModelSupport() {
     }
@@ -134,11 +139,16 @@ public final class TogetherModelSupport {
         return switch (reasoningMode(baseUrl, modelId)) {
             case NONE -> List.of(ReasoningLevel.OFF);
             case BINARY_HYBRID -> List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM);
-            case KIMI_K3 -> List.of(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX);
+            case KIMI_K3 -> List.of(ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX);
             case GPT_OSS -> List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
             case HIGH_MAX -> List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH, ReasoningLevel.MAX);
             case NEMOTRON -> List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
         };
+    }
+
+    public static ReasoningOptions reasoningOptions(String baseUrl, String modelId) {
+        return ReasoningOptions.of(availableReasoningLevels(baseUrl, modelId),
+                reasoningMode(baseUrl, modelId) == ReasoningMode.KIMI_K3 ? ReasoningLevel.MAX : ReasoningLevel.MEDIUM);
     }
 
     private static ReasoningMode reasoningMode(String baseUrl, String modelId) {
@@ -193,7 +203,8 @@ public final class TogetherModelSupport {
 
     private static ReasoningRequest kimiK3Request(ReasoningLevel level) {
         return switch (level) {
-            case OFF, LOW -> ReasoningRequest.effort("low");
+            case OFF -> ReasoningRequest.enabled(false);
+            case MINIMAL, LOW -> ReasoningRequest.effort("low");
             case MEDIUM, HIGH -> ReasoningRequest.effort("high");
             case EXTRA_HIGH, MAX, ULTRA -> ReasoningRequest.effort("max");
         };
@@ -202,7 +213,7 @@ public final class TogetherModelSupport {
     private static ReasoningRequest gptOssRequest(ReasoningLevel level) {
         return switch (level) {
             case OFF -> ReasoningRequest.none();
-            case LOW -> ReasoningRequest.effort("low");
+            case MINIMAL, LOW -> ReasoningRequest.effort("low");
             case MEDIUM -> ReasoningRequest.effort("medium");
             case HIGH, EXTRA_HIGH, MAX, ULTRA -> ReasoningRequest.effort("high");
         };

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.persistence.model;
 
-import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
@@ -76,6 +76,9 @@ public class ProviderModelCacheService {
                     metrics.primeRequests.incrementAndGet();
                     getOrLoadEntry(providerName);
                 });
+        if (providerNames.contains(CODEX_PROVIDER_NAME)) {
+            refreshCodexLocalModels();
+        }
     }
 
     public List<String> getModels(String providerName) {
@@ -95,11 +98,15 @@ public class ProviderModelCacheService {
                 : sanitizeModels(providerName, models);
     }
 
-    public Optional<List<ReasoningLevel>> findCodexReasoningLevels(String providerName, String modelId) {
+    public Optional<ReasoningOptions> findCodexReasoningOptions(String providerName, String modelId) {
         if (!CODEX_PROVIDER_NAME.equals(providerName) || StringUtils.isBlank(modelId)) {
             return Optional.empty();
         }
-        return Optional.ofNullable(codexLocalModels.reasoningLevelsByModel().get(modelId.trim()));
+        return codexLocalModels.reasoningOptions(modelId.trim());
+    }
+
+    public synchronized boolean isCodexLocalModelsLoaded() {
+        return codexLocalPublishedRefreshId > 0;
     }
 
     public List<String> refreshCodexLocalModels() {

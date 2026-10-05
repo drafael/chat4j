@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat.composer;
 
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,116 +17,90 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @ExtendWith(InputBarValidationTest.EdtInvocationExtension.class)
 class InputBarValidationTest {
 
     @Test
-    @DisplayName("Thinking toggle visibility follows model thinking capability")
-    void setThinkingAvailable_whenCapabilityChanges_updatesToggleVisibilityAndState() throws Exception {
-        InputBar subject = new InputBar();
-        JButton thinkingButton = readThinkingButton(subject);
-
-        subject.setThinkingAvailable(true);
-        subject.setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
-
-        assertThat(thinkingButton.isVisible()).isTrue();
-        assertThat(subject.isThinkingEnabled()).isTrue();
-        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-
-        subject.setThinkingAvailable(false);
-
-        assertThat(thinkingButton.isVisible()).isFalse();
-        assertThat(subject.isThinkingEnabled()).isFalse();
-        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-
-        subject.setThinkingAvailable(true);
-
-        assertThat(thinkingButton.isVisible()).isTrue();
-        assertThat(subject.isThinkingEnabled()).isTrue();
-        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-    }
-
-    @Test
-    @DisplayName("Requested reasoning is preserved while the effective level follows the selected model")
-    void setAvailableReasoningLevels_whenRequestedLevelIsUnsupported_clampsWithoutDiscardingRequest() throws Exception {
-        InputBar subject = new InputBar();
-        subject.setThinkingAvailable(true);
-        subject.setReasoningLevel(ReasoningLevel.ULTRA);
-
-        subject.setAvailableReasoningLevels(List.of(
-                ReasoningLevel.LOW,
-                ReasoningLevel.MEDIUM,
-                ReasoningLevel.HIGH,
-                ReasoningLevel.EXTRA_HIGH
-        ));
-
-        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
-        assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-        assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.EXTRA_HIGH).isSelected()).isTrue();
-        assertThat(readReasoningLevelItems(subject)).doesNotContainKey(ReasoningLevel.ULTRA);
-
-        subject.setAvailableReasoningLevels(List.of(
-                ReasoningLevel.LOW,
-                ReasoningLevel.MEDIUM,
-                ReasoningLevel.HIGH,
-                ReasoningLevel.EXTRA_HIGH,
-                ReasoningLevel.MAX
-        ));
-
-        assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.MAX);
-
-        subject.setAvailableReasoningLevels(List.of(
-                ReasoningLevel.LOW,
-                ReasoningLevel.MEDIUM,
-                ReasoningLevel.HIGH,
-                ReasoningLevel.EXTRA_HIGH,
-                ReasoningLevel.MAX,
-                ReasoningLevel.ULTRA
-        ));
-
-        assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
-        assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.ULTRA).isSelected()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Mandatory reasoning omits Off and selects the lowest supported effort without losing the saved preference")
-    void setAvailableReasoningLevels_whenThinkingIsMandatory_selectsLowestSupportedLevel() throws Exception {
+    @DisplayName("Unavailable reasoning hides the selector and discards the previous selection")
+    void setReasoningOptions_whenUnavailable_hidesSelectorWithoutRememberingPreference() throws Exception {
         var subject = new InputBar();
         try {
-            subject.setThinkingAvailable(true);
-            subject.setAvailableReasoningLevels(List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH));
+            subject.setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+            subject.setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
+            assertThat(readThinkingButton(subject).isVisible()).isTrue();
 
+            subject.setReasoningOptions(ReasoningOptions.UNAVAILABLE);
+            assertThat(readThinkingButton(subject).isVisible()).isFalse();
             assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
-            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.LOW);
-            assertThat(readReasoningLevelItems(subject)).containsOnlyKeys(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
-            assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.LOW).isSelected()).isTrue();
-            assertThat(readThinkingButton(subject).getToolTipText()).isEqualTo("Reasoning: Low");
 
-            subject.setAvailableReasoningLevels(ReasoningLevel.standardLevels());
-            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
+            subject.setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
         } finally {
             subject.removeNotify();
         }
     }
 
     @Test
-    @DisplayName("A saved Medium choice stays enabled when a model supports only High and Max")
-    void setAvailableReasoningLevels_whenMinimumEffortIsHigh_keepsReasoningEnabled() throws Exception {
+    @DisplayName("An unsupported choice uses the recommendation and does not return when switching back")
+    void setReasoningOptions_whenSelectionUnsupported_replacesAndNotifiesOnce() throws Exception {
+        var subject = new InputBar();
+        var selections = new ArrayList<ReasoningLevel>();
+        try {
+            subject.setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.values())));
+            subject.setReasoningLevel(ReasoningLevel.ULTRA);
+            subject.addReasoningLevelListener(selections::add);
+            var options = ReasoningOptions.of(ReasoningLevel.standardLevels(), ReasoningLevel.HIGH);
+
+            subject.setReasoningOptions(options);
+            subject.setReasoningOptions(options);
+
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.HIGH).isSelected()).isTrue();
+            assertThat(readReasoningLevelItems(subject)).doesNotContainKey(ReasoningLevel.ULTRA);
+            assertThat(selections).containsExactly(ReasoningLevel.HIGH);
+
+            subject.setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.values())));
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(selections).containsExactly(ReasoningLevel.HIGH);
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("Mandatory reasoning omits Off and falls back to Medium")
+    void setReasoningOptions_whenMandatory_selectsMedium() throws Exception {
         var subject = new InputBar();
         try {
-            subject.setThinkingAvailable(true);
-            subject.setReasoningLevel(ReasoningLevel.MEDIUM);
-            subject.setAvailableReasoningLevels(List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH, ReasoningLevel.MAX));
+            subject.setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH)));
 
-            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
             assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            assertThat(readReasoningLevelItems(subject)).containsOnlyKeys(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
+            assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.MEDIUM).isSelected()).isTrue();
+            assertThat(readThinkingButton(subject).getToolTipText()).isEqualTo("Reasoning: Medium");
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("A fixed enabled configuration hides the selector without disabling reasoning")
+    void setReasoningOptions_whenFixedEnabled_hidesSelectorAndKeepsRequiredLevel() throws Exception {
+        var subject = new InputBar();
+        try {
+            subject.setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.HIGH)));
+
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(readThinkingButton(subject).isVisible()).isFalse();
             assertThat(readReasoningLevelItems(subject).get(ReasoningLevel.HIGH).isSelected()).isTrue();
         } finally {
             subject.removeNotify();
@@ -134,17 +109,67 @@ class InputBarValidationTest {
 
     @Test
     @DisplayName("Binary reasoning is labeled On instead of advertising an unsupported effort level")
-    void setAvailableReasoningLevels_whenControlIsBinary_displaysOnAndOff() throws Exception {
+    void setReasoningOptions_whenBinary_displaysOnAndOff() throws Exception {
         var subject = new InputBar();
         try {
-            subject.setThinkingAvailable(true);
-            subject.setAvailableReasoningLevels(List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM));
+            subject.setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.OFF, ReasoningLevel.MEDIUM)));
             assertThat(readReasoningLevelItems(subject).values()).extracting(JRadioButtonMenuItem::getText)
                     .containsExactly("Off", "On");
 
             readReasoningLevelItems(subject).get(ReasoningLevel.MEDIUM).doClick();
-            assertThat(subject.getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
             assertThat(readThinkingButton(subject).getToolTipText()).isEqualTo("Reasoning: On");
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("Restoring unsupported or unrecognized settings uses the default without emitting intermediate writes")
+    void setReasoningLevel_whenRestoredValueUnsupported_selectsDefaultWithoutNotification() throws Exception {
+        var subject = new InputBar();
+        var selections = new ArrayList<ReasoningLevel>();
+        try {
+            subject.setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+            subject.addReasoningLevelListener(selections::add);
+
+            subject.setReasoningLevel(ReasoningLevel.ULTRA);
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            subject.setReasoningLevel(null);
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            assertThat(selections).isEmpty();
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("Pending reasoning hides old choices and defers saved-value validation until options arrive")
+    void beginReasoningRefresh_savedValueChanges_resolvesOnceWithoutInterimNotifications() throws Exception {
+        var subject = new InputBar();
+        var changes = new ArrayList<ReasoningLevel>();
+        try {
+            subject.setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+            subject.setReasoningLevel(ReasoningLevel.HIGH);
+            subject.addReasoningLevelListener(changes::add);
+
+            subject.beginReasoningRefresh();
+            subject.setReasoningLevel(ReasoningLevel.ULTRA);
+            assertThat(readReasoningLevelItems(subject)).isEmpty();
+            assertThat(readThinkingButton(subject).isVisible()).isFalse();
+            assertThat(changes).isEmpty();
+            assertThatThrownBy(subject::getReasoningLevel).isInstanceOf(IllegalStateException.class);
+
+            subject.setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+            assertThat(subject.isReasoningPending()).isFalse();
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+            assertThat(changes).containsExactly(ReasoningLevel.MEDIUM);
+
+            subject.beginReasoningRefresh();
+            subject.setReasoningLevel(null);
+            subject.setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels(), ReasoningLevel.HIGH));
+            assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(changes).containsExactly(ReasoningLevel.MEDIUM, ReasoningLevel.HIGH);
         } finally {
             subject.removeNotify();
         }

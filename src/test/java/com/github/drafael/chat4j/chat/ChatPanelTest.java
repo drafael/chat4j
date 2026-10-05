@@ -29,6 +29,8 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
+import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
@@ -89,6 +91,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.SQLException;
 import java.nio.file.Path;
@@ -1301,8 +1304,8 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
                 "OpenAI",
                 "OPENAI_API_KEY",
-                "https://api.openai.com/v1",
-                "https://api.openai.com/v1",
+                null,
+                null,
                 List.of("gpt-test"),
                 ProviderCapabilities.chatAndModels(),
                 model -> {
@@ -1369,8 +1372,8 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
                 "OpenAI",
                 "OPENAI_API_KEY",
-                "https://api.openai.com/v1",
-                "https://api.openai.com/v1",
+                null,
+                null,
                 List.of("gpt-test"),
                 ProviderCapabilities.chatAndModels(),
                 model -> requestProvider,
@@ -1411,10 +1414,16 @@ class ChatPanelTest {
     @Test
     @DisplayName("Loading a known OAuth provider before discovery preserves its model selection")
     void setSelectedModel_whenKnownProviderIsStillBeingDiscovered_preservesSelection() throws Exception {
+        var reasoningChanges = new ArrayList<ReasoningLevel>();
         runOnEdt(() -> {
+            subject.getInputBar().setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+            subject.getInputBar().addReasoningLevelListener(reasoningChanges::add);
             setField(subject, "providerMap", emptyMap());
             subject.setSelectedModel("GitHub Copilot > claude-sonnet-4.6");
 
+            assertThat(reasoningChanges).isEmpty();
+            assertThat(subject.getInputBar().isReasoningPending()).isTrue();
             assertThat(subject.getSelectedModel()).isEqualTo("GitHub Copilot > claude-sonnet-4.6");
             assertThat(subject.getModelSelectorButton().getProviderName()).isEqualTo("GitHub Copilot");
             assertThat(subject.getModelSelectorButton().getModelName()).isEqualTo("claude-sonnet-4.6");
@@ -1426,8 +1435,11 @@ class ChatPanelTest {
     @DisplayName("Selecting an unavailable provider clears runtime and composer readiness")
     void setSelectedModel_whenProviderIsUnavailable_clearsRuntimeAndComposerReadiness() throws Exception {
         runOnEdt(() -> {
+            var provider = new ProviderRegistry.ProviderDef("LocalTest", null, null, null, List.of("basic-model"),
+                    ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of);
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
             subject.getInputBar().setText("ready to send");
-            subject.setSelectedModel("Ollama > llama3.2:latest");
+            subject.setSelectedModel("LocalTest > basic-model");
         });
         assertThat(callOnEdt(() -> subject.getInputBar().isSendable())).isTrue();
 
@@ -1456,6 +1468,37 @@ class ChatPanelTest {
             subject.setSelectedModel("LateProvider > late-model");
         });
         runOnEdt(() -> assertThat(subject.getSelectedModel()).isEqualTo("LateProvider > late-model"));
+    }
+
+    @Test
+    @DisplayName("Popup discovery resolves a saved selection even when its scope supersedes ordinary discovery")
+    void updateProviderModelsFromPopup_savedSelectionPending_resolvesReasoning() throws Exception {
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI", null, null, null, List.of("gpt-5.4"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        var cache = callOnEdt(() -> (ProviderModelCacheService) readField(subject, "modelCacheService"));
+        long staleScope = cache.nextScopeVersion();
+        long popupScope = cache.nextScopeVersion();
+        invokePrepareProviderModels(subject, List.of(provider), popupScope);
+        updateModels(cache, provider.name(), "", provider.seedModels());
+        var changes = new ArrayList<ReasoningLevel>();
+        runOnEdt(() -> {
+            setField(subject, "providerMap", emptyMap());
+            subject.setSelectedModel("OpenAI > gpt-5.4");
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+            subject.getInputBar().setText("question");
+            subject.getInputBar().addReasoningLevelListener(changes::add);
+            assertThat(subject.getInputBar().isReasoningPending()).isTrue();
+
+            assertThat(invokeUpdateProviderModelsFromPopup(subject, List.of(provider), popupScope)).isTrue();
+            invokeApplyProviderModels(subject, emptyList(), staleScope);
+
+            assertThat(subject.getInputBar().isReasoningPending()).isFalse();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(subject.getInputBar().isSendable()).isTrue();
+            assertThat(changes).isEmpty();
+        });
     }
 
     @Test
@@ -1601,34 +1644,35 @@ class ChatPanelTest {
             subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
             assertThat(thinkingButton.isVisible()).isTrue();
 
-            subject.getInputBar().setThinkingEnabled(true);
-            assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.MEDIUM);
+            assertThat(subject.getInputBar().getReasoningLevel().enabled()).isTrue();
 
             subject.setSelectedModel("LocalTest > basic-model");
             assertThat(thinkingButton.isVisible()).isFalse();
-            assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
         });
     }
 
     @ParameterizedTest
     @CsvSource({
-            "Anthropic, claude-sonnet-4-6, Off Low Medium High Max",
-            "Anthropic, claude-sonnet-5-5, Off Low Medium High Extra_High Max",
-            "Anthropic, claude-opus-5-5, Low Medium High Extra_High Max",
-            "OpenRouter, anthropic/claude-sonnet-4.6, Off Low Medium High Max",
-            "OpenRouter, anthropic/claude-sonnet-5.5:batch, Low Medium High Extra_High Max",
-            "OpenRouter, anthropic/claude-opus-5.5, Low Medium High Extra_High Max",
-            "Together, MiniMaxAI/MiniMax-M3, Off On",
-            "Together, moonshotai/Kimi-K3, Low High Max",
-            "Together, openai/gpt-oss-120b, Low Medium High",
-            "Together, deepseek-ai/DeepSeek-V4-Pro, Off High Max",
-            "Together, nvidia/nemotron-3-ultra-550b-a55b, Off Medium High"
+            "Anthropic, claude-sonnet-4-6, Off Low Medium High Max, MEDIUM",
+            "Anthropic, claude-sonnet-5-5, Off Low Medium High Extra_High Max, HIGH",
+            "Anthropic, claude-opus-5-5, Low Medium High Extra_High Max, MEDIUM",
+            "OpenRouter, anthropic/claude-sonnet-4.6, Off Low Medium High Max, MEDIUM",
+            "OpenRouter, anthropic/claude-sonnet-5.5:batch, Low Medium High Extra_High Max, HIGH",
+            "OpenRouter, anthropic/claude-opus-5.5, Low Medium High Extra_High Max, HIGH",
+            "Together, MiniMaxAI/MiniMax-M3, Off On, MEDIUM",
+            "Together, moonshotai/Kimi-K3, Off Low High Max, MAX",
+            "Together, openai/gpt-oss-120b, Low Medium High, MEDIUM",
+            "Together, deepseek-ai/DeepSeek-V4-Pro, Off High Max, HIGH",
+            "Together, nvidia/nemotron-3-ultra-550b-a55b, Off Medium High, MEDIUM"
     })
     @DisplayName("The composer menu follows provider-specific reasoning levels and mandatory thinking")
     void setSelectedModel_whenReasoningPolicyVaries_updatesMenuAndEffectiveSelection(
             String providerName,
             String modelId,
-            String labels
+            String labels,
+            ReasoningLevel expectedFallback
     ) throws Exception {
         String baseUrl = providerName.equals("Together") ? "https://api.together.ai/v1" : null;
         var provider = new ProviderRegistry.ProviderDef(
@@ -1642,21 +1686,31 @@ class ChatPanelTest {
             Field menuField = InputBar.class.getDeclaredField("reasoningLevelMenu");
             menuField.setAccessible(true);
             JPopupMenu menu = (JPopupMenu) menuField.get(inputBar);
-            assertThat(inputBar.isThinkingAvailable()).isTrue();
+            assertThat(readThinkingButton(inputBar).isVisible()).isTrue();
             assertThat(Arrays.stream(menu.getComponents()).map(component -> ((JRadioButtonMenuItem) component).getText()))
                     .containsExactlyElementsOf(Arrays.stream(labels.split(" ")).map(label -> label.replace('_', ' ')).toList());
-            assertThat(inputBar.getEffectiveReasoningLevel().enabled()).isEqualTo(!labels.startsWith("Off"));
+            assertThat(inputBar.getReasoningLevel().enabled()).isEqualTo(!labels.startsWith("Off"));
 
             inputBar.setReasoningLevel(ReasoningLevel.ULTRA);
-            JRadioButtonMenuItem lastItem = (JRadioButtonMenuItem) menu.getComponent(menu.getComponentCount() - 1);
-            assertThat(lastItem.isSelected()).isTrue();
-            assertThat(readThinkingButton(inputBar).getToolTipText()).isEqualTo("Reasoning: %s".formatted(lastItem.getText()));
+            assertThat(inputBar.getReasoningLevel()).isEqualTo(expectedFallback);
+            List<JRadioButtonMenuItem> selectedItems = Arrays.stream(menu.getComponents())
+                    .map(JRadioButtonMenuItem.class::cast)
+                    .filter(JRadioButtonMenuItem::isSelected)
+                    .toList();
+            assertThat(selectedItems).hasSize(1);
+            assertThat(readThinkingButton(inputBar).getToolTipText())
+                    .isEqualTo("Reasoning: %s".formatted(selectedItems.getFirst().getText()));
         });
     }
 
     @Test
     @DisplayName("Codex reasoning selection follows the selected model's advertised levels")
-    void setSelectedModel_whenCodexModelChanges_clampsAndRestoresReasoningLevel() throws Exception {
+    void setSelectedModel_whenCodexModelChanges_replacesUnsupportedReasoningLevel() throws Exception {
+        var cache = mock(ProviderModelCacheService.class);
+        when(cache.isCodexLocalModelsLoaded()).thenReturn(true);
+        CodexLocalModelCache.builtinSnapshot().reasoningLevelsByModel().forEach((model, levels) ->
+                when(cache.findCodexReasoningOptions("OpenAI Codex", model)).thenReturn(Optional.of(ReasoningOptions.of(levels))));
+        runOnEdt(() -> setField(subject, "modelCacheService", cache));
         ProviderRegistry.ProviderDef codexProvider = new ProviderRegistry.ProviderDef(
                 "OpenAI Codex",
                 "CODEX_ACCESS_TOKEN",
@@ -1673,26 +1727,22 @@ class ChatPanelTest {
             subject.setSelectedModel("OpenAI Codex > gpt-5.6-sol");
             subject.getInputBar().setReasoningLevel(ReasoningLevel.ULTRA);
 
-            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
 
             subject.setSelectedModel("OpenAI Codex > gpt-5.6-luna");
-
-            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
-            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.MAX);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
 
             subject.setSelectedModel("OpenAI Codex > gpt-5.5");
-
-            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
 
             subject.setSelectedModel("OpenAI Codex > gpt-5.6-sol");
-
-            assertThat(subject.getInputBar().getEffectiveReasoningLevel()).isEqualTo(ReasoningLevel.ULTRA);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
         });
     }
 
     @Test
-    @DisplayName("Switching conversations away and back restores previously selected reasoning level")
-    void setSelectedModel_whenSwitchingAwayAndBack_restoresReasoningState() throws Exception {
+    @DisplayName("Switching models discards unsupported reasoning selections rather than remembering them")
+    void setSelectedModel_whenSwitchingAwayAndBack_doesNotRestoreDiscardedReasoning() throws Exception {
         ProviderRegistry.ProviderDef reasoningProvider = new ProviderRegistry.ProviderDef(
                 "OpenRouter",
                 "OPENROUTER_API_KEY",
@@ -1721,24 +1771,519 @@ class ChatPanelTest {
             setField(subject, "providerMap", customProviders);
             JButton thinkingButton = readThinkingButton(subject.getInputBar());
 
-            // Conversation A
             subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
             subject.getInputBar().setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
             assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-            assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
 
-            // Switch to conversation B (non-reasoning model)
             subject.setSelectedModel("LocalTest > basic-model");
             assertThat(thinkingButton.isVisible()).isFalse();
-            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-            assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
 
-            // Switch back to conversation A
             subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
             assertThat(thinkingButton.isVisible()).isTrue();
-            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-            assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
         });
+    }
+
+    @Test
+    @DisplayName("First-send persistence and execution share the selected effort snapshot despite later composer changes")
+    void onSend_reasoningChangesWhilePersistencePending_keepsSelectedSnapshot() throws Exception {
+        var persisted = new CompletableFuture<UUID>();
+        controlledFutures.add(persisted);
+        var submitted = new CompletableFuture<ChatPanel.UserMessageEvent>();
+        var executedLevel = new AtomicReference<ReasoningLevel>();
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                executedLevel.set(reasoningLevel);
+                onToken.accept("answer");
+                onComplete.run();
+            }
+        });
+        runOnEdt(() -> {
+            subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM, ReasoningLevel.HIGH)));
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                submitted.complete(event);
+                return persisted;
+            });
+            subject.getInputBar().setText("question");
+        });
+
+        invokeOnSend(subject);
+        ChatPanel.UserMessageEvent event = submitted.get(2, TimeUnit.SECONDS);
+        assertThat(event.createsConversation()).isTrue();
+        assertThat(event.reasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.HIGH))));
+        persisted.complete(event.conversationId());
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+
+        assertThat(executedLevel).hasValue(ReasoningLevel.MEDIUM);
+        assertThat(callOnEdt(() -> subject.getInputBar().getReasoningLevel())).isEqualTo(ReasoningLevel.HIGH);
+    }
+
+    @Test
+    @DisplayName("A provider-refresh fallback retains reasoning supported by the replacement model without an intermediate Off")
+    void applyProviderModels_selectedProviderRemoved_keepsSupportedReasoning() throws Exception {
+        var previous = new ProviderRegistry.ProviderDef(
+                "OpenRouter", null, null, null, List.of("anthropic/claude-sonnet-4.6"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        var replacement = new ProviderRegistry.ProviderDef(
+                "Anthropic", null, null, null, List.of("claude-sonnet-4-6"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        var changes = new ArrayList<ReasoningLevel>();
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(previous.name(), previous));
+            subject.setSelectedModel("OpenRouter > anthropic/claude-sonnet-4.6");
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+            subject.getInputBar().setAgentProjectRoot(tempDir);
+            subject.getInputBar().setAgentModeEnabled(true);
+            assertThat(subject.getInputBar().isAgentModeEnabled()).isTrue();
+            subject.getInputBar().addReasoningLevelListener(changes::add);
+
+            invokeApplyProviderModels(subject, List.of(replacement));
+
+            assertThat(subject.getSelectedModel()).isEqualTo("Anthropic > claude-sonnet-4-6");
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(subject.getInputBar().isAgentModeEnabled()).isTrue();
+            assertThat(changes).isEmpty();
+        });
+    }
+
+    @Test
+    @DisplayName("Advertised Codex reasoning choices override missing model-name hints")
+    void setSelectedModel_codexWithOpaqueName_usesAdvertisedReasoning() throws Exception {
+        var cache = mock(ProviderModelCacheService.class);
+        when(cache.isCodexLocalModelsLoaded()).thenReturn(true);
+        when(cache.findCodexReasoningOptions("OpenAI Codex", "experimental-chat"))
+                .thenReturn(Optional.of(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM, ReasoningLevel.HIGH), ReasoningLevel.HIGH)));
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI Codex", null, null, null, List.of("experimental-chat"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        runOnEdt(() -> {
+            setField(subject, "modelCacheService", cache);
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.setSelectedModel("OpenAI Codex > experimental-chat");
+
+            assertThat(readThinkingButton(subject.getInputBar()).isVisible()).isTrue();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+        });
+    }
+
+    @Test
+    @DisplayName("Codex restoration waits for initial metadata and later effort-only updates replace only unsupported choices")
+    void setSelectedModel_codexMetadataUninitialized_defersSavedSelection() throws Exception {
+        var cache = mock(ProviderModelCacheService.class);
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI Codex", null, null, null, List.of("gpt-5.5"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        var changes = new ArrayList<ReasoningLevel>();
+        Method catalogChanged = ChatPanel.class.getDeclaredMethod("handleModelCatalogChanged");
+        catalogChanged.setAccessible(true);
+        runOnEdt(() -> {
+            setField(subject, "modelCacheService", cache);
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            setField(subject, "installedProviderScope", 1L);
+            subject.setSelectedModel("OpenAI Codex > gpt-5.5");
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.MAX);
+            subject.getInputBar().addReasoningLevelListener(changes::add);
+            assertThat(subject.getInputBar().isReasoningPending()).isTrue();
+            assertThat(changes).isEmpty();
+
+            when(cache.isCodexLocalModelsLoaded()).thenReturn(true);
+            when(cache.findCodexReasoningOptions(provider.name(), "gpt-5.5"))
+                    .thenReturn(Optional.of(ReasoningOptions.of(List.of(ReasoningLevel.HIGH, ReasoningLevel.MAX))));
+            catalogChanged.invoke(subject);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.MAX);
+            assertThat(changes).isEmpty();
+
+            when(cache.findCodexReasoningOptions(provider.name(), "gpt-5.5"))
+                    .thenReturn(Optional.of(ReasoningOptions.of(List.of(ReasoningLevel.HIGH))));
+            catalogChanged.invoke(subject);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.HIGH);
+            assertThat(readThinkingButton(subject.getInputBar()).isVisible()).isFalse();
+            assertThat(changes).containsExactly(ReasoningLevel.HIGH);
+        });
+    }
+
+    @ParameterizedTest
+    @CsvSource({"gpt-4o-mini", "gpt-4o-mini-2024-07-18", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"})
+    @DisplayName("Known non-reasoning OpenAI models remain sendable with identity-only catalog metadata")
+    void setSelectedModel_knownNonReasoningOpenAiModel_resolvesOffWithoutEffortMetadata(String model) throws Exception {
+        var worker = new AtomicReference<Thread>();
+        var changes = new ArrayList<ReasoningLevel>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] body = "{\"id\":\"%s\",\"object\":\"model\",\"owned_by\":\"system\"}".formatted(model).getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            var provider = new ProviderRegistry.ProviderDef("OpenAI", null, endpoint, endpoint, List.of(model),
+                    ProviderCapabilities.chatAndModels(), ignored -> immediateProvider("ok"), List::of);
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.getInputBar().setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+                subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+                subject.getInputBar().addReasoningLevelListener(changes::add);
+                subject.setSelectedModel("OpenAI > %s".formatted(model));
+                subject.getInputBar().setText("question");
+                worker.set((Thread) ((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get());
+            });
+            if (worker.get() != null) {
+                worker.get().join(5000);
+                assertThat(worker.get().isAlive()).isFalse();
+            }
+            flushEdt();
+            runOnEdt(() -> {
+                assertThat(subject.getInputBar().isReasoningPending()).isFalse();
+                assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
+                assertThat(subject.getInputBar().isSendable()).isTrue();
+                assertThat(changes).containsExactly(ReasoningLevel.OFF);
+            });
+        } finally {
+            try {
+                if (worker.get() != null) {
+                    worker.get().join(5000);
+                }
+            } finally {
+                server.stop(0);
+                flushEdt();
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"OpenAI, gpt-4o", "OpenAI, gpt-4o-2024-11-20", "GitHub Copilot, gpt-4o", "OpenRouter, openai/gpt-4o"})
+    @DisplayName("Retired GPT-4o selections cannot be restored or sent")
+    void setSelectedModel_retiredGpt4o_clearsSelection(String providerName, String model) throws Exception {
+        var provider = new ProviderRegistry.ProviderDef(providerName, null, null, null, List.of(model),
+                ProviderCapabilities.chatAndModels(), ignored -> immediateProvider("ok"), List::of);
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.setSelectedModel("%s > %s".formatted(providerName, model));
+            subject.getInputBar().setText("question");
+            assertThat(subject.getSelectedModel()).isNull();
+        });
+        invokeOnSend(subject);
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "gemini-3.1-flash-image, HIGH, HIGH, true",
+            "gemini-3.1-flash-image-preview, MINIMAL, MINIMAL, true",
+            "gemini-3.1-flash-lite-image, OFF, MINIMAL, true",
+            "gemini-3.1-flash-image, ULTRA, MINIMAL, true",
+            "gemini-3-pro-image, HIGH, MEDIUM, false",
+            "gemini-3-pro-image-preview, HIGH, MEDIUM, false"
+    })
+    @DisplayName("Exact Gemini image policies retain supported choices and never normalize to Off")
+    void setSelectedModel_googleImage_preservesExactReasoningPolicy(
+            String model, ReasoningLevel saved, ReasoningLevel expected, boolean visible
+    ) throws Exception {
+        var provider = new ProviderRegistry.ProviderDef("Google AI", null, null, null, List.of(model),
+                ProviderCapabilities.chatAndModels(), ignored -> immediateProvider("ok"), List::of);
+        var changes = new ArrayList<ReasoningLevel>();
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.values())));
+            subject.getInputBar().setReasoningLevel(saved);
+            subject.getInputBar().addReasoningLevelListener(changes::add);
+            subject.setSelectedModel("Google AI > %s".formatted(model));
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(expected);
+            assertThat(readThinkingButton(subject.getInputBar()).isVisible()).isEqualTo(visible);
+            assertThat(changes).containsExactlyElementsOf(saved == expected ? emptyList() : List.of(expected));
+        });
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "Ollama|[\"future\"]", "LM Studio|[\"future\"]",
+            "Ollama|[]", "LM Studio|[]",
+            "Ollama|null", "LM Studio|null",
+            "Ollama|42", "LM Studio|42",
+            "Ollama|[\"off\",\"future\"]", "LM Studio|[\"off\",\"future\"]"
+    }, delimiter = '|')
+    @DisplayName("Unusable advertised local choices preserve the candidate and block Send without emitting a correction")
+    void setSelectedModel_unusableLocalChoices_remainsPending(String providerName, String values) throws Exception {
+        var worker = new AtomicReference<Thread>();
+        var changes = new ArrayList<ReasoningLevel>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            String json = providerName.equals("Ollama")
+                    ? "{\"thinking\":{\"values\":%s,\"default\":\"future\"},\"capabilities\":[\"thinking\"]}".formatted(values)
+                    : "{\"models\":[{\"key\":\"custom-model\",\"capabilities\":{\"reasoning\":{\"allowed_options\":%s,\"default\":\"future\"}}}]}".formatted(values);
+            byte[] body = json.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            var provider = new ProviderRegistry.ProviderDef(providerName, null, baseUrl, baseUrl, List.of("custom-model"),
+                    ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of);
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.values())));
+                subject.getInputBar().setReasoningLevel(ReasoningLevel.ULTRA);
+                subject.getInputBar().addReasoningLevelListener(changes::add);
+                subject.setSelectedModel("%s > custom-model".formatted(providerName));
+                subject.getInputBar().setText("question");
+                worker.set((Thread) ((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get());
+            });
+            if (worker.get() != null) {
+                worker.get().join(5000);
+                assertThat(worker.get().isAlive()).isFalse();
+            }
+            flushEdt();
+            runOnEdt(() -> {
+                assertThat(subject.getInputBar().isReasoningPending()).isTrue();
+                assertThat(subject.getInputBar().isSendable()).isFalse();
+                Field selection = InputBar.class.getDeclaredField("reasoningLevel");
+                selection.setAccessible(true);
+                assertThat(selection.get(subject.getInputBar())).isEqualTo(ReasoningLevel.ULTRA);
+                assertThat(changes).isEmpty();
+                assertThat(readField(subject, "pendingReasoningRetry")).isNotNull();
+            });
+        } finally {
+            if (worker.get() != null) {
+                worker.get().join(5000);
+            }
+            server.stop(0);
+            flushEdt();
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"Ollama", "LM Studio"})
+    @DisplayName("Local catalog resolution presents Off and On without losing a pending enabled selection")
+    void setSelectedModel_localReasoningMetadata_normalizesAfterWorker(String providerName) throws Exception {
+        var worker = new AtomicReference<Thread>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] body = """
+                    {"id":"custom-model","supports_reasoning":true,"supports_web_search":false,"supports_tools":false,
+                     "thinking":{"values":[false,true],"default":true},
+                     "models":[{"key":"custom-model","capabilities":{"reasoning":{"allowed_options":["off","on"],"default":"on"}}}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            var provider = new ProviderRegistry.ProviderDef(providerName, null, baseUrl, baseUrl, List.of("custom-model"),
+                    ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of);
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.getInputBar().setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+                subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+                subject.setSelectedModel("%s > custom-model".formatted(providerName));
+                assertThat(subject.getInputBar().isReasoningPending()).isTrue();
+                worker.set((Thread) ((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get());
+            });
+            if (worker.get() != null) {
+                worker.get().join(5000);
+                assertThat(worker.get().isAlive()).isFalse();
+            }
+            flushEdt();
+            runOnEdt(() -> {
+                assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+                Field menuField = InputBar.class.getDeclaredField("reasoningLevelMenu");
+                menuField.setAccessible(true);
+                JPopupMenu menu = (JPopupMenu) menuField.get(subject.getInputBar());
+                assertThat(Arrays.stream(menu.getComponents()).map(component -> ((JRadioButtonMenuItem) component).getText()))
+                        .containsExactly("Off", "On");
+            });
+        } finally {
+            if (worker.get() != null) {
+                worker.get().join(5000);
+            }
+            server.stop(0);
+            flushEdt();
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false, HIGH", "true, OFF"})
+    @DisplayName("A pending capability check preserves the selection and cannot overwrite a newer model")
+    void setSelectedModel_reasoningProbePending_preservesSelectionUntilResolved(boolean switchModel, ReasoningLevel expected) throws Exception {
+        var probeStarted = new CountDownLatch(1);
+        var releaseProbe = new CountDownLatch(1);
+        var changes = new ArrayList<ReasoningLevel>();
+        var worker = new AtomicReference<Thread>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            probeStarted.countDown();
+            try {
+                releaseProbe.await();
+                byte[] body = """
+                        {"id":"experimental-chat","supports_reasoning":true,"supports_web_search":false,"supports_tools":false}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI", null, baseUrl, baseUrl, List.of("experimental-chat"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        try {
+            runOnEdt(() -> {
+                subject.getInputBar().setReasoningOptions(ReasoningOptions.of(ReasoningLevel.standardLevels()));
+                subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+                subject.getInputBar().addReasoningLevelListener(changes::add);
+                var plainProvider = new ProviderRegistry.ProviderDef(
+                        "LocalTest", null, null, null, List.of("basic-model"),
+                        ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+                );
+                setField(subject, "providerMap", Map.of(provider.name(), provider, plainProvider.name(), plainProvider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.setSelectedModel("OpenAI > experimental-chat");
+                subject.getInputBar().setText("question");
+                worker.set((Thread) ((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get());
+            });
+            assertThat(probeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {
+                assertThat(changes).isEmpty();
+                assertThat(readThinkingButton(subject.getInputBar()).isVisible()).isFalse();
+                assertThat(subject.getInputBar().isSendable()).isFalse();
+                subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+            });
+            invokeOnSend(subject);
+            assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+            if (switchModel) {
+                runOnEdt(() -> subject.setSelectedModel("LocalTest > basic-model"));
+            }
+
+            releaseProbe.countDown();
+            worker.get().join(5000);
+            assertThat(worker.get().isAlive()).isFalse();
+            flushEdt();
+            runOnEdt(() -> {
+                assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(expected);
+                assertThat(changes).containsExactlyElementsOf(switchModel ? List.of(ReasoningLevel.OFF) : emptyList());
+                assertThat(readThinkingButton(subject.getInputBar()).isVisible()).isEqualTo(!switchModel);
+                assertThat(subject.getInputBar().isSendable()).isTrue();
+            });
+        } finally {
+            releaseProbe.countDown();
+            if (worker.get() != null) {
+                worker.get().join(5000);
+            }
+            server.stop(0);
+            flushEdt();
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"500, true", "malformed, true", "missing, true", "500, false"})
+    @DisplayName("Failed or inconclusive probes preserve the candidate and remain retryable after typing and Enter")
+    void reasoningProbe_unknownThenRetry_preservesSelectionUntilKnown(String failure, boolean supported) throws Exception {
+        var response = new AtomicReference<>(failure.equals("malformed") ? "not-json" : "{}");
+        var status = new AtomicInteger(failure.equals("500") ? 500 : 200);
+        var staleRetry = new AtomicReference<Runnable>();
+        var gate = new AtomicReference<>(new CountDownLatch(1));
+        var worker = new AtomicReference<Thread>();
+        var changes = new ArrayList<ReasoningLevel>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            try {
+                gate.get().await();
+                byte[] body = response.get().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(status.get(), body.length);
+                exchange.getResponseBody().write(body);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI", null, baseUrl, baseUrl, List.of("experimental-chat"),
+                ProviderCapabilities.chatAndModels(), model -> immediateProvider("ok"), List::of
+        );
+        try {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.setSelectedModel("OpenAI > experimental-chat");
+                subject.getInputBar().setReasoningLevel(ReasoningLevel.HIGH);
+                subject.getInputBar().addReasoningLevelListener(changes::add);
+                worker.set((Thread) ((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get());
+            });
+            gate.get().countDown();
+            worker.get().join(5000);
+            assertThat(worker.get().isAlive()).isFalse();
+            flushEdt();
+            runOnEdt(() -> {
+                assertThat(subject.getInputBar().isReasoningPending()).isTrue();
+                assertThat(changes).isEmpty();
+                staleRetry.set((Runnable) readField(subject, "pendingReasoningRetry"));
+                subject.getInputBar().setText("edited draft");
+            });
+            invokeOnSend(subject);
+            status.set(200);
+            response.set("""
+                    {"id":"experimental-chat","supports_reasoning":%s,"supports_web_search":false,"supports_tools":false}
+                    """.formatted(supported));
+            gate.set(new CountDownLatch(1));
+            runOnEdt(() -> {
+                subject.getInputBar().activateValidationAction();
+                worker.set((Thread) ((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get());
+            });
+            assertThat(worker.get()).isNotNull();
+            gate.get().countDown();
+            worker.get().join(5000);
+            assertThat(worker.get().isAlive()).isFalse();
+            flushEdt();
+            runOnEdt(() -> {
+                assertThat(subject.getInputBar().isReasoningPending()).isFalse();
+                assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(supported ? ReasoningLevel.HIGH : ReasoningLevel.OFF);
+                staleRetry.get().run();
+                assertThat(((AtomicReference<?>) readField(subject, "capabilityRefreshThread")).get()).isNull();
+                assertThat(changes).containsExactlyElementsOf(supported ? emptyList() : List.of(ReasoningLevel.OFF));
+                assertThat(subject.getInputBar().isSendable()).isTrue();
+            });
+        } finally {
+            gate.get().countDown();
+            try {
+                if (worker.get() != null) {
+                    worker.get().join(5000);
+                }
+            } finally {
+                server.stop(0);
+                flushEdt();
+            }
+        }
     }
 
     @Test
@@ -6858,10 +7403,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking bubble renders without nested inner scroll containers")
     void onSend_whenProviderEmitsThinking_usesSingleRenderedPath() throws Exception {
-        runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(true);
-            subject.getInputBar().setThinkingEnabled(true);
-        });
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM))));
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -6905,10 +7447,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking-only completions do not create an empty assistant message bubble")
     void onSend_whenProviderEmitsOnlyThinking_keepsOnlyTheActivityBubble() throws Exception {
-        runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(true);
-            subject.getInputBar().setThinkingEnabled(true);
-        });
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM))));
         setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
@@ -7055,10 +7594,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking stream ignores non-visible control tokens and keeps visible text")
     void onSend_whenThinkingIncludesControlSequences_keepsVisibleThinkingText() throws Exception {
-        runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(true);
-            subject.getInputBar().setThinkingEnabled(true);
-        });
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM))));
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -7123,8 +7659,7 @@ class ChatPanelTest {
         });
 
         runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(true);
-            subject.getInputBar().setThinkingEnabled(true);
+            subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM)));
             readInputTextArea(subject.getInputBar()).setText("question");
         });
         invokeOnSend(subject);
@@ -7168,10 +7703,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Think tags emitted in answer tokens are rendered as thinking for any provider")
     void onSend_whenProviderEmitsThinkTagsInAnswerTokens_extractsThinkingModelAgnostically() throws Exception {
-        runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(true);
-            subject.getInputBar().setThinkingEnabled(true);
-        });
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM))));
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -7202,10 +7734,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Think tags in answer tokens render as thinking even when reasoning is disabled")
     void onSend_whenReasoningDisabledAndProviderEmitsThinkTags_rendersActivityBubble() throws Exception {
-        runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(false);
-            subject.getInputBar().setThinkingEnabled(false);
-        });
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.UNAVAILABLE));
         setCurrentProvider(subject, immediateProvider("<think>hidden reasoning</think>visible answer"));
 
         runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
@@ -7218,10 +7747,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Native thinking tokens are rendered and persisted separately from assistant answer text")
     void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersActivityBubble() throws Exception {
-        runOnEdt(() -> {
-            subject.getInputBar().setThinkingAvailable(true);
-            subject.getInputBar().setThinkingEnabled(true);
-        });
+        runOnEdt(() -> subject.getInputBar().setReasoningOptions(ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM))));
 
         setCurrentProvider(subject, new ProviderService() {
             @Override

@@ -4,9 +4,11 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -17,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
@@ -27,21 +30,17 @@ public final class CodexLocalModelCache {
 
     private static final JsonCodec JSON = JsonCodec.standard();
     private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
+    // Visible models and efforts from the official Codex catalog, checked 2026-10-04:
+    // https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json
     private static final List<String> BUILTIN_CODEX_MODELS = List.of(
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
             "gpt-5.6-sol",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex",
-            "gpt-5.3-codex-spark",
-            "gpt-5.2-codex",
-            "gpt-5.2",
-            "gpt-5.1-codex-max",
-            "gpt-5.1-codex-mini",
-            "gpt-5.1",
-            "gpt-5-codex"
+            "gpt-5.5"
     );
     private static final List<ReasoningLevel> GPT_5_5_REASONING_LEVELS = List.of(
             ReasoningLevel.LOW,
@@ -49,14 +48,14 @@ public final class CodexLocalModelCache {
             ReasoningLevel.HIGH,
             ReasoningLevel.EXTRA_HIGH
     );
-    private static final List<ReasoningLevel> GPT_5_6_REASONING_LEVELS = List.of(
+    private static final List<ReasoningLevel> MAX_REASONING_LEVELS = List.of(
             ReasoningLevel.LOW,
             ReasoningLevel.MEDIUM,
             ReasoningLevel.HIGH,
             ReasoningLevel.EXTRA_HIGH,
             ReasoningLevel.MAX
     );
-    private static final List<ReasoningLevel> GPT_5_6_ULTRA_REASONING_LEVELS = List.of(
+    private static final List<ReasoningLevel> ULTRA_REASONING_LEVELS = List.of(
             ReasoningLevel.LOW,
             ReasoningLevel.MEDIUM,
             ReasoningLevel.HIGH,
@@ -65,17 +64,32 @@ public final class CodexLocalModelCache {
             ReasoningLevel.ULTRA
     );
     private static final Map<String, List<ReasoningLevel>> BUILTIN_REASONING_LEVELS = Map.of(
-            "gpt-5.5", GPT_5_5_REASONING_LEVELS,
-            "gpt-5.6-sol", GPT_5_6_ULTRA_REASONING_LEVELS,
-            "gpt-5.6-terra", GPT_5_6_ULTRA_REASONING_LEVELS,
-            "gpt-5.6-luna", GPT_5_6_REASONING_LEVELS
+            "gpt-6-astra", ULTRA_REASONING_LEVELS,
+            "gpt-6.1-sol", ULTRA_REASONING_LEVELS,
+            "gpt-6-sol", ULTRA_REASONING_LEVELS,
+            "gpt-6-luna", MAX_REASONING_LEVELS,
+            "gpt-5.6-sol", ULTRA_REASONING_LEVELS,
+            "gpt-5.6-terra", ULTRA_REASONING_LEVELS,
+            "gpt-5.6-luna", MAX_REASONING_LEVELS,
+            "gpt-5.5", GPT_5_5_REASONING_LEVELS
+    );
+
+    private static final Map<String, ReasoningLevel> BUILTIN_DEFAULT_LEVELS = Map.of(
+            "gpt-6-astra", ReasoningLevel.LOW,
+            "gpt-6.1-sol", ReasoningLevel.LOW,
+            "gpt-6-sol", ReasoningLevel.MEDIUM,
+            "gpt-6-luna", ReasoningLevel.MEDIUM,
+            "gpt-5.6-sol", ReasoningLevel.LOW,
+            "gpt-5.6-terra", ReasoningLevel.MEDIUM,
+            "gpt-5.6-luna", ReasoningLevel.MEDIUM,
+            "gpt-5.5", ReasoningLevel.MEDIUM
     );
 
     private CodexLocalModelCache() {
     }
 
     public static Snapshot builtinSnapshot() {
-        return new Snapshot(BUILTIN_CODEX_MODELS, emptyList(), BUILTIN_REASONING_LEVELS);
+        return new Snapshot(BUILTIN_CODEX_MODELS, emptyList(), BUILTIN_REASONING_LEVELS, BUILTIN_DEFAULT_LEVELS, true, false);
     }
 
     public static Snapshot readSnapshot() {
@@ -95,6 +109,7 @@ public final class CodexLocalModelCache {
                 ModelOrdering.sanitizeAndSortByProvider(CODEX_PROVIDER_NAME, models.stream().toList()),
                 localModels.hidden(),
                 reasoningLevels,
+                localModels.authoritative() ? localModels.defaultLevelsByModel() : BUILTIN_DEFAULT_LEVELS,
                 localModels.loadedSuccessfully(),
                 localModels.authoritative()
         );
@@ -114,7 +129,17 @@ public final class CodexLocalModelCache {
 
             List<String> visible = modelSlugs(cache.models(), false);
             List<String> hidden = modelSlugs(cache.models(), true);
-            return new LocalModels(visible, hidden, reasoningLevelsByModel(cache.models()), true, true);
+            Map<String, ReasoningLevel> defaults = new LinkedHashMap<>();
+            cache.models().stream()
+                    .filter(Objects::nonNull)
+                    .filter(model -> visible.contains(StringUtils.trim(model.slug())))
+                    .forEach(model -> {
+                        ReasoningLevel level = ReasoningLevel.fromSettingValue(model.defaultReasoningLevel(), null);
+                        if (level != null) {
+                            defaults.put(model.slug().trim(), level);
+                        }
+                    });
+            return new LocalModels(visible, hidden, reasoningLevelsByModel(cache.models()), defaults, true, true);
         } catch (Exception e) {
             log.warn("Failed reading OpenAI Codex models cache: {}", ExceptionUtils.getMessage(e));
             return LocalModels.empty(false);
@@ -138,14 +163,19 @@ public final class CodexLocalModelCache {
                 .filter(model -> model.supportedReasoningLevels() != null)
                 .collect(toMap(
                         model -> model.slug().trim(),
-                        model -> model.supportedReasoningLevels().stream()
-                                .filter(Objects::nonNull)
-                                .map(SupportedReasoningLevel::effort)
-                                .map(effort -> ReasoningLevel.fromSettingValue(effort, null))
-                                .filter(Objects::nonNull)
-                                .distinct()
-                                .sorted()
-                                .toList(),
+                        model -> {
+                            List<ReasoningLevel> levels = model.supportedReasoningLevels().stream()
+                                    .filter(Objects::nonNull)
+                                    .map(SupportedReasoningLevel::effort)
+                                    .map(effort -> ReasoningLevel.fromSettingValue(effort, null))
+                                    .filter(Objects::nonNull)
+                                    .distinct()
+                                    .sorted()
+                                    .toList();
+                            Validate.isTrue(model.supportedReasoningLevels().isEmpty() || !levels.isEmpty(),
+                                    "Codex effort metadata contains no recognized levels for model %s", model.slug());
+                            return levels;
+                        },
                         (first, second) -> second,
                         LinkedHashMap::new
                 ));
@@ -165,19 +195,20 @@ public final class CodexLocalModelCache {
             List<String> models,
             List<String> hiddenModels,
             Map<String, List<ReasoningLevel>> reasoningLevelsByModel,
+            Map<String, ReasoningLevel> defaultLevelsByModel,
             boolean loadedSuccessfully,
             boolean authoritative
     ) {
         public Snapshot(List<String> models, List<String> hiddenModels) {
-            this(models, hiddenModels, emptyMap(), true, false);
+            this(models, hiddenModels, emptyMap(), emptyMap(), true, false);
         }
 
         public Snapshot(List<String> models, List<String> hiddenModels, boolean loadedSuccessfully) {
-            this(models, hiddenModels, emptyMap(), loadedSuccessfully, false);
+            this(models, hiddenModels, emptyMap(), emptyMap(), loadedSuccessfully, false);
         }
 
         public Snapshot(List<String> models, List<String> hiddenModels, Map<String, List<ReasoningLevel>> reasoningLevelsByModel) {
-            this(models, hiddenModels, reasoningLevelsByModel, true, false);
+            this(models, hiddenModels, reasoningLevelsByModel, emptyMap(), true, false);
         }
 
         public Snapshot {
@@ -191,6 +222,13 @@ public final class CodexLocalModelCache {
                             LinkedHashMap::new
                     ));
             reasoningLevelsByModel = Map.copyOf(reasoningLevelsByModel);
+            defaultLevelsByModel = Map.copyOf(defaultLevelsByModel);
+        }
+
+        public Optional<ReasoningOptions> reasoningOptions(String modelId) {
+            return Optional.ofNullable(reasoningLevelsByModel.get(modelId)).map(levels -> levels.isEmpty()
+                    ? ReasoningOptions.UNAVAILABLE
+                    : ReasoningOptions.of(levels, defaultLevelsByModel.getOrDefault(modelId, ReasoningLevel.MEDIUM)));
         }
     }
 
@@ -202,7 +240,8 @@ public final class CodexLocalModelCache {
     private record CachedModel(
             String slug,
             String visibility,
-            @JsonProperty("supported_reasoning_levels") List<SupportedReasoningLevel> supportedReasoningLevels
+            @JsonProperty("supported_reasoning_levels") List<SupportedReasoningLevel> supportedReasoningLevels,
+            @JsonProperty("default_reasoning_level") String defaultReasoningLevel
     ) {
     }
 
@@ -214,11 +253,12 @@ public final class CodexLocalModelCache {
             List<String> visible,
             List<String> hidden,
             Map<String, List<ReasoningLevel>> reasoningLevelsByModel,
+            Map<String, ReasoningLevel> defaultLevelsByModel,
             boolean loadedSuccessfully,
             boolean authoritative
     ) {
         private static LocalModels empty(boolean loadedSuccessfully) {
-            return new LocalModels(emptyList(), emptyList(), emptyMap(), loadedSuccessfully, false);
+            return new LocalModels(emptyList(), emptyList(), emptyMap(), emptyMap(), loadedSuccessfully, false);
         }
     }
 }

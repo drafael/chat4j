@@ -23,6 +23,7 @@ import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.Nativ
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedPart;
 import com.github.drafael.chat4j.provider.support.GeneratedImageAttachmentWriter;
+import com.github.drafael.chat4j.provider.support.GoogleReasoningSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
@@ -242,7 +243,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                         "Content-Type", "application/json",
                         "x-goog-api-key", runtime.apiKey()
                 ),
-                HttpBody.utf8(requestBody(projectionPlan, imageOutputModel, nativeWebSearch, reasoningLevel)),
+                HttpBody.utf8(requestBody(projectionPlan, imageOutputModel, nativeWebSearch, reasoningLevel, runtime.selectedModel())),
                 REQUEST_TIMEOUT,
                 MAX_RESPONSE_BYTES
         );
@@ -357,7 +358,8 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             AttachmentProjectionPlan projectionPlan,
             boolean includeImageResponse,
             boolean webSearchEnabled,
-            ReasoningLevel reasoningLevel
+            ReasoningLevel reasoningLevel,
+            String modelId
     ) {
         List<GoogleAiApi.Part> systemParts = projectionPlan.messages().stream()
                 .filter(message -> message.role() == Role.SYSTEM)
@@ -372,11 +374,12 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                         message.parts().stream().map(this::toGooglePart).filter(java.util.Objects::nonNull).toList()
                 ))
                 .toList();
-        GoogleAiApi.GenerationConfig generationConfig = includeImageResponse || reasoningLevel.enabled()
-                ? new GoogleAiApi.GenerationConfig(
-                        includeImageResponse ? List.of("TEXT", "IMAGE") : null,
-                        reasoningLevel.enabled() ? new GoogleAiApi.ThinkingConfig(true) : null
-                )
+        Integer thinkingBudget = GoogleReasoningSupport.thinkingBudget(modelId, reasoningLevel);
+        String thinkingLevel = GoogleReasoningSupport.thinkingLevel(modelId, reasoningLevel);
+        GoogleAiApi.ThinkingConfig thinkingConfig = reasoningLevel.enabled() || thinkingBudget != null || thinkingLevel != null
+                ? new GoogleAiApi.ThinkingConfig(reasoningLevel.enabled(), thinkingBudget, thinkingLevel) : null;
+        GoogleAiApi.GenerationConfig generationConfig = includeImageResponse || thinkingConfig != null
+                ? new GoogleAiApi.GenerationConfig(includeImageResponse ? List.of("TEXT", "IMAGE") : null, thinkingConfig)
                 : null;
         var request = new GoogleAiApi.GenerateRequest(
                 systemParts.isEmpty() ? null : new GoogleAiApi.SystemInstruction(systemParts),

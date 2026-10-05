@@ -1028,6 +1028,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             return Optional.empty();
         }
         return Optional.of(switch (reasoningLevel) {
+            case MINIMAL -> "minimal";
             case LOW -> "low";
             case MEDIUM -> "medium";
             case HIGH -> "high";

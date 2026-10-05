@@ -13,6 +13,9 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -35,6 +38,139 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class OpenAiToolAgentAdapterTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "OpenAI | gpt-5 | MINIMAL | reasoning_effort | \"minimal\"",
+            "OpenAI | gpt-5.5 | OFF | reasoning_effort | \"none\"",
+            "Google AI | gemini-3.8-flash | LOW | reasoning_effort | \"low\"",
+            "Google AI | gemini-2.5-flash | OFF | reasoning_effort | \"none\"",
+            "DeepSeek | deepseek-flash | MAX | reasoning_effort | \"max\"",
+            "DeepSeek | deepseek-flash | OFF | thinking | {\"type\":\"disabled\"}",
+            "Mistral | mistral-small-latest | HIGH | reasoning_effort | \"high\"",
+            "Mistral | mistral-small-latest | OFF | reasoning_effort | \"none\"",
+            "xAI | grok-4.3 | OFF | reasoning_effort | \"none\"",
+            "Groq | openai/gpt-oss-120b | MEDIUM | reasoning_effort | \"medium\"",
+            "OpenRouter | anthropic/claude-opus-5.5 | MAX | reasoning | {\"effort\":\"max\",\"exclude\":false}",
+            "OpenRouter | openai/gpt-5.5 | OFF | reasoning | {\"enabled\":false}",
+            "OpenRouter | google/gemini-3.8-flash | HIGH | reasoning | {\"effort\":\"high\",\"exclude\":false}",
+            "OpenRouter | deepseek/deepseek-v4.1-flash | MAX | reasoning | {\"effort\":\"max\",\"exclude\":false}",
+            "Ollama | local-model | OFF | reasoning_effort | \"none\"",
+            "Ollama | local-model | ULTRA | reasoning_effort | \"ultra\"",
+            "LM Studio | local-model | MEDIUM | reasoning_effort | \"medium\""
+    }, delimiter = '|')
+    @DisplayName("Agent tool continuations retain the selected effort and opaque provider reasoning data")
+    void executeTurn_selectedReasoning_preservesControlsAndContinuation(String provider, String model, ReasoningLevel level, String property, String expectedJson) throws Exception {
+        String content = provider.equals("Mistral")
+                ? "[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"trace\"}]},{\"type\":\"text\",\"text\":\"\"}]"
+                : "\"\"";
+        String firstResponse = """
+                {"choices":[{"message":{"content":%s,"reasoning_content":%s,
+                  "extra_content":{"google":{"thought_signature":"opaque-message-signature"}},
+                  "reasoning_details":[{"type":"reasoning.encrypted","data":"opaque-signature","index":0}],
+                  "tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"},
+                    "extra_content":{"google":{"thought_signature":"opaque-google-signature"}}}]}}]}
+                """.formatted(content, provider.equals("Mistral") ? "null" : "\"trace\"");
+        var requests = new ArrayList<String>();
+        var server = createChatCompletionsServer(List.of(firstResponse, "{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"), requests, List.of(200, 200));
+        server.createContext("/", exchange -> {
+            String metadata = provider.equals("Ollama")
+                    ? """
+                      {"thinking":{"values":[false,"medium","ultra"],"default":"medium"}}
+                      """
+                    : """
+                      {"models":[{"key":"local-model","capabilities":{"reasoning":true}}]}
+                      """;
+            byte[] body = metadata.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        try {
+            var subject = new OpenAiToolAgentAdapter(provider, model, "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    "test-key", ProviderAttachmentTestSupport.authority());
+            var errors = new ArrayList<Exception>();
+            var tokens = new ArrayList<String>();
+            var thinking = new ArrayList<String>();
+            var callbacks = new AgentRunCallbacks(tokens::add, thinking::add, () -> { }, errors::add);
+            var request = new AgentRunRequest(List.of(Message.user("read note")), level, Path.of("."), emptyList(), () -> false);
+            assertThat(subject.executeTurn(request, callbacks).toolInvocations()).hasSize(1);
+            assertThat(subject.executeTurn(request.withToolResults(List.of(new ToolInvocationResult("call_1", "read", true, "text", ""))), callbacks).completed()).isTrue();
+            assertThat(errors).isEmpty();
+            assertThat(tokens).containsExactly("done");
+            assertThat(thinking).containsExactlyElementsOf(level.enabled() ? List.of("trace") : emptyList());
+            assertThat(requests).hasSize(2);
+            for (String body : requests) {
+                assertThat(JSON.readTree(body).path(property)).isEqualTo(JSON.readTree(expectedJson));
+            }
+            JsonNode replay = JSON.readTree(requests.get(1)).path("messages").get(2);
+            JsonNode original = JSON.readTree(firstResponse).path("choices").get(0).path("message");
+            assertThat(replay.path("content")).isEqualTo(original.path("content"));
+            assertThat(replay.path("tool_calls")).isEqualTo(original.path("tool_calls"));
+            if (provider.equals("OpenRouter")) {
+                assertThat(replay.path("reasoning_details")).isEqualTo(original.path("reasoning_details"));
+            }
+            if (provider.equals("Google AI")) {
+                assertThat(replay.path("extra_content")).isEqualTo(original.path("extra_content"));
+            }
+            if (provider.equals("DeepSeek") || provider.equals("Ollama") || provider.equals("LM Studio")) {
+                assertThat(replay.path("reasoning_content")).isEqualTo(original.path("reasoning_content"));
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "[]"})
+    @DisplayName("Empty OpenRouter reasoning details do not hide the plaintext continuation")
+    void executeTurn_emptyOpenRouterDetails_replaysPlaintextReasoning(String details) throws Exception {
+        String response = """
+                {"choices":[{"message":{"content":"","reasoning_details":%s,"reasoning":"trace",
+                  "tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}
+                """.formatted(details);
+        var bodies = new ArrayList<String>();
+        var server = createChatCompletionsServer(List.of(response, "{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"), bodies, List.of(200, 200));
+        try {
+            var subject = new OpenAiToolAgentAdapter("OpenRouter", "deepseek/deepseek-v4.1-flash",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()), "key", ProviderAttachmentTestSupport.authority());
+            var errors = new ArrayList<Exception>();
+            var callbacks = new AgentRunCallbacks(ignored -> { }, ignored -> { }, () -> { }, errors::add);
+            var request = new AgentRunRequest(List.of(Message.user("read")), ReasoningLevel.HIGH, Path.of("."), emptyList(), () -> false);
+            assertThat(subject.executeTurn(request, callbacks).toolInvocations()).hasSize(1);
+            assertThat(subject.executeTurn(request.withToolResults(List.of(new ToolInvocationResult("call_1", "read", true, "text", ""))), callbacks).completed()).isTrue();
+            assertThat(errors).isEmpty();
+            JsonNode replay = JSON.readTree(bodies.get(1)).path("messages").get(2);
+            assertThat(replay.path("reasoning").asText()).isEqualTo("trace");
+            assertThat(replay.has("reasoning_details")).isFalse();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\"done\"", "[{\"type\":\"text\",\"text\":\"done\"}]"})
+    @DisplayName("A final Mistral answer may explicitly set tool_calls to null")
+    void executeTurn_nullToolCalls_acceptsFinalAnswer(String content) throws Exception {
+        var bodies = new ArrayList<String>();
+        String response = "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":%s,\"tool_calls\":null}}]}".formatted(content);
+        var server = createChatCompletionsServer(List.of(response), bodies, List.of(200));
+        try {
+            var subject = new OpenAiToolAgentAdapter("Mistral", "mistral-small-latest",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()), "key", ProviderAttachmentTestSupport.authority());
+            var tokens = new ArrayList<String>();
+            var errors = new ArrayList<Exception>();
+            var request = new AgentRunRequest(List.of(Message.user("reply")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false);
+            AgentTurnResult result = subject.executeTurn(request, new AgentRunCallbacks(tokens::add, ignored -> { }, () -> { }, errors::add));
+            assertThat(errors).isEmpty();
+            assertThat(result.completed()).isTrue();
+            assertThat(result.toolInvocations()).isEmpty();
+            assertThat(tokens).containsExactly("done");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Native OpenAI payload preserves MCP name, description, and recursive schema")
@@ -531,6 +667,17 @@ class OpenAiToolAgentAdapterTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Together Kimi K3 Agent requests share the corrected Off and maximum-effort policy")
+    void applyTogetherReasoning_kimiK3_usesExplicitDisableAndMaximum() throws Exception {
+        var subject = new OpenAiToolAgentAdapter("Together", "moonshotai/Kimi-K3", "https://api.together.ai/v1",
+                "key", ProviderAttachmentTestSupport.authority());
+        assertThat(applyTogetherReasoning(subject, ReasoningLevel.OFF))
+                .containsExactlyEntriesOf(Map.of("reasoning", Map.of("enabled", false)));
+        assertThat(applyTogetherReasoning(subject, ReasoningLevel.MAX))
+                .containsExactlyEntriesOf(Map.of("reasoning_effort", "max"));
     }
 
     @Test

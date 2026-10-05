@@ -14,6 +14,7 @@ import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
+import com.github.drafael.chat4j.provider.support.OpenAiReasoningSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
 import lombok.NonNull;
@@ -120,7 +121,11 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             payload.put("tools", toolDefinitions());
             payload.put("tool_choice", "auto");
             payload.put("stream", false);
-            applyTogetherReasoning(payload, request.reasoningLevel());
+            if (TogetherModelSupport.isTogether(providerName)) {
+                applyTogetherReasoning(payload, request.reasoningLevel());
+            } else {
+                payload.putAll(OpenAiReasoningSupport.properties(providerName, modelId, baseUrl, apiKey, request.reasoningLevel()));
+            }
 
             Map<String, String> headers = authHeaders();
             headers.put("Content-Type", "application/json");
@@ -352,10 +357,10 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     }
 
     private ValidatedToolBatch validateToolCalls(Map<String, Object> message) {
-        if (!message.containsKey("tool_calls")) {
+        Object toolCallsValue = message.get("tool_calls");
+        if (toolCallsValue == null) {
             return ValidatedToolBatch.empty();
         }
-        Object toolCallsValue = message.get("tool_calls");
         if (!(toolCallsValue instanceof List<?> toolCalls)) {
             throw invalidResponse("message.tool_calls must be an array when present");
         }
@@ -415,8 +420,18 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                 case NONE -> null;
             };
         }
-        if (Strings.CI.equals(StringUtils.trim(providerName), "DeepSeek")) {
-            return firstReasoningContinuation(message, List.of("reasoning_content"));
+        if (Strings.CI.equals(StringUtils.trim(providerName), "OpenRouter")) {
+            List<String> populatedFields = List.of("reasoning_details", "reasoning", "reasoning_content").stream()
+                    .filter(field -> message.get(field) instanceof List<?> details && !details.isEmpty()
+                            || message.get(field) instanceof String text && StringUtils.isNotEmpty(text))
+                    .toList();
+            return firstReasoningContinuation(message, populatedFields);
+        }
+        if (Strings.CI.equalsAny(StringUtils.trim(providerName), "DeepSeek", "Ollama", "LM Studio")) {
+            return firstReasoningContinuation(message, List.of("reasoning_content", "reasoning"));
+        }
+        if (Strings.CI.equals(StringUtils.trim(providerName), "Google AI")) {
+            return firstReasoningContinuation(message, List.of("extra_content"));
         }
         return null;
     }
@@ -439,20 +454,28 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         }
         return parts.stream()
                 .map(this::objectMap)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .filter(part -> "text".equals(part.get("type")))
                 .map(part -> textualValue(part.get("text")))
                 .collect(joining());
     }
 
     private String extractReasoningText(Map<String, Object> message) {
-        return List.of("reasoning", "reasoning_content", "thinking", "thought").stream()
+        String text = List.of("reasoning", "reasoning_content", "thinking", "thought").stream()
                 .map(message::get)
                 .filter(String.class::isInstance)
                 .map(String.class::cast)
                 .filter(StringUtils::isNotBlank)
                 .findFirst()
                 .orElse("");
+        if (StringUtils.isNotBlank(text) || !Strings.CS.equals(providerName, "Mistral")
+                || !(message.get("content") instanceof List<?> parts)) {
+            return text;
+        }
+        return parts.stream().map(this::objectMap).filter(Objects::nonNull)
+                .filter(part -> "thinking".equals(part.get("type")) && part.get("thinking") instanceof List<?>)
+                .map(part -> extractAssistantText(Map.of("content", part.get("thinking"))))
+                .collect(joining());
     }
 
     private String textualValue(Object value) {
@@ -470,9 +493,6 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     }
 
     private void applyTogetherReasoning(Map<String, Object> payload, ReasoningLevel reasoningLevel) {
-        if (!TogetherModelSupport.isTogether(providerName)) {
-            return;
-        }
         TogetherModelSupport.ReasoningRequest reasoning = TogetherModelSupport.reasoningRequest(
                 baseUrl,
                 modelId,

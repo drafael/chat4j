@@ -774,13 +774,8 @@ public class ModelSelectorPopup extends JDialog {
                 boolean codexAvailable = providers.stream()
                         .map(ProviderDef::name)
                         .anyMatch(CODEX_PROVIDER_NAME::equals);
-                List<String> previousCodexModels = codexAvailable
-                        ? modelCacheService.getModels(CODEX_PROVIDER_NAME)
-                        : emptyList();
-                List<String> codexModels = codexAvailable
-                        ? modelCacheService.refreshCodexLocalModels()
-                        : emptyList();
-                if (codexAvailable && !codexModels.equals(previousCodexModels)) {
+                if (codexAvailable) {
+                    modelCacheService.refreshCodexLocalModels();
                     codexModelsChangedPending.set(true);
                 }
                 if (!isCurrentProviderLoad(loadId)) {
@@ -1250,7 +1245,7 @@ public class ModelSelectorPopup extends JDialog {
                 : ProviderCapabilityResolver.supportsImageInput(provider.capabilities(), provider.name(), modelId);
         boolean supportsReasoning = togetherProvider
                 ? TogetherModelSupport.supportsReasoning(provider.baseUrl(), modelId)
-                : ProviderCapabilityResolver.supportsReasoning(provider.capabilities(), provider.name(), modelId);
+                : ProviderCapabilityResolver.supportsReasoning(provider.name(), modelId);
         NativeWebSearchOutcome nativeWebSearchOutcome =
                 ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
                         provider.name(),
@@ -1306,7 +1301,6 @@ public class ModelSelectorPopup extends JDialog {
                 }
 
                 boolean supportsReasoning = ProviderCapabilityResolver.supportsReasoning(
-                        entry.def.capabilities(),
                         entry.name(),
                         modelId,
                         entry.baseUrl(),

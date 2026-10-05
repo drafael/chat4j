@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -76,76 +79,184 @@ public final class ProviderCapabilityResolver {
         return !model.isBlank() && containsAny(model, IMAGE_MODEL_ALLOW_HINTS);
     }
 
-    public static boolean supportsReasoning(ProviderCapabilities capabilities, String providerName, String modelId) {
-        return supportsReasoning(capabilities, providerName, modelId, null, null);
-    }
-
-    public static boolean supportsReasoning(
-            ProviderCapabilities capabilities,
-            String providerName,
-            String modelId,
-            String baseUrl
-    ) {
-        return supportsReasoning(capabilities, providerName, modelId, baseUrl, null);
-    }
-
-    public static boolean supportsReasoning(
-            ProviderCapabilities capabilities,
+    /** Resolves control choices from existing model evidence; does not perform capability probes. */
+    public static ReasoningOptions reasoningOptions(
             String providerName,
             String modelId,
             String baseUrl,
-            String apiKey
+            @NonNull ReasoningOptions catalogOptions
     ) {
         if (TogetherModelSupport.isTogether(providerName)) {
-            return TogetherModelSupport.supportsReasoning(baseUrl, modelId);
+            return TogetherModelSupport.reasoningOptions(baseUrl, modelId);
+        }
+        if (Strings.CS.equals(providerName, "Anthropic")
+                || (Strings.CS.equals(providerName, "OpenRouter") && Strings.CS.startsWith(modelId, "anthropic/claude-"))) {
+            return ReasoningOptions.of(
+                    ClaudeReasoningSupport.availableLevels(modelId, Strings.CS.equals(providerName, "OpenRouter")),
+                    Strings.CS.equals(providerName, "OpenRouter")
+                            && Strings.CS.equals(StringUtils.substringBefore(modelId, ":"), "anthropic/claude-opus-5.5")
+                            ? ReasoningLevel.HIGH : ClaudeReasoningSupport.recommendedLevel(modelId)
+            );
+        }
+        if (CODEX_PROVIDER_NAME.equals(providerName)) {
+            return catalogOptions;
+        }
+        Optional<ReasoningOptions> knownOptions = knownReasoningOptions(providerName, modelId);
+        if (knownOptions.isPresent()) {
+            return knownOptions.get();
+        }
+        if (Strings.CS.equals(providerName, "Perplexity") && PerplexityModelIds.isReasoningSonarModel(modelId)) {
+            // The native Sonar client does not send an effort or reasoning-disable parameter.
+            return ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM));
+        }
+        return ReasoningOptions.of(ReasoningLevel.standardLevels());
+    }
+
+    /** Blocking metadata lookup; call from the existing capability worker, never the EDT. */
+    public static LocalReasoningMetadata resolveLocalReasoningOptions(String providerName, String modelId, String baseUrl, String apiKey) {
+        String provider = normalize(providerName);
+        if (StringUtils.isBlank(baseUrl) || StringUtils.isBlank(modelId)
+                || !(containsAny(provider, OLLAMA_PROVIDER_HINTS) || containsAny(provider, LM_STUDIO_PROVIDER_HINTS))) {
+            return LocalReasoningMetadata.ABSENT;
+        }
+        return DynamicCapabilityResolver.resolveLocalReasoningOptions(provider, modelId, baseUrl, apiKey);
+    }
+
+    public static boolean supportsExplicitReasoningOff(String providerName, String modelId) {
+        if (!Strings.CS.equalsAny(providerName, "OpenAI", "Google AI", "Mistral", "xAI")) {
+            return false;
+        }
+        return knownReasoningOptions(providerName, modelId)
+                .filter(options -> options.levels().contains(ReasoningLevel.OFF))
+                .filter(options -> options.levels().stream().anyMatch(ReasoningLevel::enabled)).isPresent();
+    }
+
+    // Provider routes have different effort vocabularies and defaults for the same model family.
+    private static Optional<ReasoningOptions> knownReasoningOptions(String providerName, String modelId) {
+        if (Strings.CS.equals(providerName, "OpenRouter")) {
+            return OpenRouterReasoningSupport.options(modelId);
+        }
+        if (Strings.CS.equals(providerName, "Google AI")) {
+            return GoogleReasoningSupport.options(modelId);
+        }
+        if (Strings.CS.equals(providerName, "DeepSeek")) {
+            return switch (StringUtils.trimToEmpty(modelId)) {
+                case "deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash" -> Optional.of(ReasoningOptions.of(
+                        List.of(ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX), ReasoningLevel.HIGH));
+                default -> Optional.empty();
+            };
+        }
+        if (Strings.CS.equals(providerName, "Mistral")) {
+            return switch (StringUtils.trimToEmpty(modelId)) {
+                case "mistral-small-latest", "mistral-small-2603", "mistral-medium-3-5", "mistral-medium-latest",
+                     "mistral-medium-2604" -> Optional.of(ReasoningOptions.of(List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH), ReasoningLevel.HIGH));
+                case "zai-glm-5-3" -> Optional.of(ReasoningOptions.of(List.of(
+                        ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX), ReasoningLevel.HIGH));
+                default -> Optional.empty();
+            };
+        }
+        if (Strings.CS.equals(providerName, "Groq")) {
+            return Optional.ofNullable(switch (StringUtils.trimToEmpty(modelId)) {
+                case "openai/gpt-oss-20b", "openai/gpt-oss-120b" -> ReasoningOptions.of(
+                        List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH)
+                );
+                case "qwen/qwen3.8-27b" -> ReasoningOptions.of(
+                        List.of(ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH), ReasoningLevel.OFF
+                );
+                default -> null;
+            });
+        }
+        if (Strings.CS.equals(providerName, "xAI")) {
+            return switch (StringUtils.trimToEmpty(modelId)) {
+                case "grok-4.3", "grok-4.7" -> Optional.of(ReasoningOptions.of(
+                        StringUtils.trimToEmpty(modelId).equals("grok-4.3") ? ReasoningLevel.standardLevels()
+                                : List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH),
+                        StringUtils.trimToEmpty(modelId).equals("grok-4.3") ? ReasoningLevel.LOW : ReasoningLevel.HIGH
+                ));
+                default -> Optional.empty();
+            };
+        }
+        if (!Strings.CS.equals(providerName, "OpenAI")) {
+            return Optional.empty();
+        }
+        String model = StringUtils.trimToEmpty(modelId).replaceFirst("-\\d{4}-\\d{2}-\\d{2}$", "");
+        return Optional.ofNullable(switch (model) {
+            case "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano" -> ReasoningOptions.UNAVAILABLE;
+            case "gpt-5", "gpt-5-mini", "gpt-5-nano" -> ReasoningOptions.of(List.of(
+                    ReasoningLevel.MINIMAL, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH));
+            case "gpt-5.1" -> ReasoningOptions.of(
+                    List.of(ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH), ReasoningLevel.OFF
+            );
+            case "gpt-5.2", "gpt-5.4" -> ReasoningOptions.of(ReasoningLevel.standardLevels(), ReasoningLevel.OFF);
+            case "gpt-5.5" -> ReasoningOptions.of(ReasoningLevel.standardLevels());
+            case "gpt-6-sol", "gpt-6-luna" -> ReasoningOptions.of(List.of(
+                    ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX));
+            case "gpt-6-astra", "gpt-6.1-sol" -> ReasoningOptions.of(List.of(
+                    ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX
+            ));
+            default -> null;
+        });
+    }
+
+    public static boolean supportsReasoning(String providerName, String modelId) {
+        return supportsReasoning(providerName, modelId, null, null);
+    }
+
+    public static boolean supportsReasoning(String providerName, String modelId, String baseUrl) {
+        return supportsReasoning(providerName, modelId, baseUrl, null);
+    }
+
+    public static boolean supportsReasoning(String providerName, String modelId, String baseUrl, String apiKey) {
+        return resolveReasoningSupport(providerName, modelId, baseUrl, apiKey).orElse(false);
+    }
+
+    /** Empty means no evidence, not confirmation that reasoning is unsupported. */
+    public static Optional<Boolean> resolveReasoningSupport(String providerName, String modelId, String baseUrl, String apiKey) {
+        if (TogetherModelSupport.isTogether(providerName)) {
+            return Optional.of(TogetherModelSupport.supportsReasoning(baseUrl, modelId));
         }
 
         String provider = normalize(providerName);
         String model = normalize(modelId);
 
-        if (containsAny(model, REASONING_MODEL_DENY_HINTS)) {
-            return false;
-        }
-
         if (containsAny(provider, PERPLEXITY_PROVIDER_HINTS)) {
-            return PerplexityModelIds.isReasoningSonarModel(modelId);
+            return Optional.of(PerplexityModelIds.isReasoningSonarModel(modelId));
         }
 
         Optional<Boolean> dynamicallyResolvedSupport = resolveDynamicReasoningSupport(provider, modelId, baseUrl, apiKey);
         if (dynamicallyResolvedSupport.isPresent()) {
-            return dynamicallyResolvedSupport.get();
+            return dynamicallyResolvedSupport;
         }
 
+        Optional<ReasoningOptions> knownOptions = knownReasoningOptions(providerName, modelId);
+        if (knownOptions.isPresent()) {
+            return Optional.of(knownOptions.get().levels().stream().anyMatch(ReasoningLevel::enabled));
+        }
+        if (containsAny(model, REASONING_MODEL_DENY_HINTS)) {
+            return Optional.of(false);
+        }
         if (containsAny(provider, DEEPSEEK_PROVIDER_HINTS)) {
-            return supportsDeepSeekReasoning(model);
+            return Optional.of(supportsDeepSeekReasoning(model));
         }
 
         if (OPENROUTER_PROVIDER_HINTS.contains(provider) && PerplexityModelIds.isNamespacedReasoningSonarModel(modelId)) {
-            return true;
+            return Optional.of(true);
         }
 
-        if (!containsAny(provider, REASONING_PROVIDER_HINTS)) {
-            return false;
-        }
-
-        return !model.isBlank() && containsAny(model, REASONING_MODEL_ALLOW_HINTS);
+        return containsAny(provider, REASONING_PROVIDER_HINTS)
+                && !model.isBlank() && containsAny(model, REASONING_MODEL_ALLOW_HINTS)
+                ? Optional.of(true) : Optional.empty();
     }
 
-    public static boolean supportsToolInvocation(ProviderCapabilities capabilities, String providerName, String modelId) {
-        return supportsToolInvocation(capabilities, providerName, modelId, null, null);
+    public static boolean supportsToolInvocation(String providerName, String modelId) {
+        return supportsToolInvocation(providerName, modelId, null, null);
+    }
+
+    public static boolean supportsToolInvocation(String providerName, String modelId, String baseUrl) {
+        return supportsToolInvocation(providerName, modelId, baseUrl, null);
     }
 
     public static boolean supportsToolInvocation(
-            ProviderCapabilities capabilities,
-            String providerName,
-            String modelId,
-            String baseUrl
-    ) {
-        return supportsToolInvocation(capabilities, providerName, modelId, baseUrl, null);
-    }
-
-    public static boolean supportsToolInvocation(
-            ProviderCapabilities capabilities,
             String providerName,
             String modelId,
             String baseUrl,

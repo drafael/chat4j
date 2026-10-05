@@ -278,7 +278,7 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
     private long reasoningBudget(ReasoningLevel reasoningLevel) {
         return switch (reasoningLevel) {
             case OFF -> 0L;
-            case LOW -> 1_024L;
+            case MINIMAL, LOW -> 1_024L;
             case MEDIUM -> 2_048L;
             case HIGH -> 4_096L;
             case EXTRA_HIGH, MAX, ULTRA -> 8_192L;
@@ -288,7 +288,7 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
     private OutputConfig.Effort outputEffort(ReasoningLevel reasoningLevel) {
         return switch (reasoningLevel) {
             case OFF -> throw new IllegalArgumentException("Disabled thinking has no output effort.");
-            case LOW -> OutputConfig.Effort.LOW;
+            case MINIMAL, LOW -> OutputConfig.Effort.LOW;
             case MEDIUM, HIGH -> OutputConfig.Effort.HIGH;
             case EXTRA_HIGH, MAX, ULTRA -> OutputConfig.Effort.MAX;
         };

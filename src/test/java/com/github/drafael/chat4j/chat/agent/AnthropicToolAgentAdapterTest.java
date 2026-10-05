@@ -9,6 +9,9 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +28,89 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AnthropicToolAgentAdapterTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @ParameterizedTest
+    @CsvSource(value = {
+            "claude-sonnet-4-6 | HIGH | {\"type\":\"adaptive\",\"display\":\"summarized\"} | high | 8192",
+            "claude-sonnet-4-6 | OFF | null | null | 4096",
+            "claude-sonnet-5-5 | OFF | {\"type\":\"between_tools\"} | low | 4096",
+            "claude-opus-5-5 | MAX | {\"type\":\"adaptive\",\"display\":\"summarized\"} | max | 12288",
+            "claude-sonnet-4-5 | HIGH | {\"type\":\"enabled\",\"budget_tokens\":4096} | null | 8192",
+            "claude-sonnet-4-5 | OFF | null | null | 4096"
+    }, delimiter = '|', nullValues = "null")
+    @DisplayName("Anthropic Agent turns use selected reasoning and replay signed blocks unchanged with tool results")
+    void executeTurn_selectedReasoning_preservesSignedContinuation(String model, ReasoningLevel level, String thinkingJson, String effort, int maxTokens) throws Exception {
+        String firstResponse = """
+                {"content":[
+                  {"type":"thinking","thinking":"trace","signature":"opaque-signature","extra_metadata":{"key":"value"}},
+                  {"type":"redacted_thinking","data":"opaque-redacted-data"},
+                  {"type":"text","text":""},
+                  {"type":"tool_use","id":"toolu_1","name":"read","input":{}}
+                ],"stop_reason":"tool_use"}
+                """;
+        var bodies = new ArrayList<String>();
+        var server = createMessagesServer(List.of(firstResponse, "{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}"), bodies);
+        try {
+            var subject = new AnthropicToolAgentAdapter(model, "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    "test-key", ProviderAttachmentTestSupport.authority());
+            var tokens = new ArrayList<String>();
+            var thinking = new ArrayList<String>();
+            var errors = new ArrayList<Exception>();
+            var callbacks = new AgentRunCallbacks(tokens::add, thinking::add, () -> { }, errors::add);
+            var request = new AgentRunRequest(List.of(Message.user("read")), level, Path.of("."), emptyList(), () -> false);
+            assertThat(subject.executeTurn(request, callbacks).toolInvocations()).hasSize(1);
+            assertThat(subject.executeTurn(request.withToolResults(List.of(new ToolInvocationResult("toolu_1", "read", true, "text", ""))), callbacks).completed()).isTrue();
+            assertThat(errors).isEmpty();
+            assertThat(tokens).containsExactly("done");
+            assertThat(thinking).containsExactlyElementsOf(level.enabled() ? List.of("trace") : emptyList());
+            assertThat(bodies).hasSize(2);
+            for (String body : bodies) {
+                JsonNode payload = JSON.readTree(body);
+                assertThat(payload.get("thinking")).isEqualTo(thinkingJson == null ? null : JSON.readTree(thinkingJson));
+                assertThat(payload.path("output_config").path("effort").asText(null)).isEqualTo(effort);
+                assertThat(payload.path("max_tokens").asInt()).isEqualTo(maxTokens);
+            }
+            JsonNode initial = JSON.readTree(bodies.getFirst());
+            JsonNode followUp = JSON.readTree(bodies.get(1));
+            assertThat(followUp.path("system")).isEqualTo(initial.path("system"));
+            assertThat(followUp.path("tools")).isEqualTo(initial.path("tools"));
+            assertThat(followUp.path("messages").get(0)).isEqualTo(initial.path("messages").get(0));
+            assertThat(followUp.path("messages").get(1).path("content"))
+                    .isEqualTo(JSON.readTree(firstResponse).path("content"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\"invalid\"", "[]", "42", "true"})
+    @DisplayName("Malformed Anthropic tool inputs fail instead of becoming empty arguments")
+    void executeTurn_nonObjectToolInput_rejectsToolBatch(String input) throws Exception {
+        String response = """
+                {"content":[{"type":"tool_use","id":"toolu_1","name":"read","input":%s}]}
+                """.formatted(input);
+        var bodies = new ArrayList<String>();
+        var server = createMessagesServer(List.of(response), bodies);
+        try {
+            var subject = new AnthropicToolAgentAdapter("claude-sonnet-4-6",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    "test-key", ProviderAttachmentTestSupport.authority());
+            var errors = new ArrayList<Exception>();
+            var request = new AgentRunRequest(List.of(Message.user("read")), ReasoningLevel.OFF,
+                    Path.of("."), emptyList(), () -> false);
+            AgentTurnResult result = subject.executeTurn(request,
+                    new AgentRunCallbacks(ignored -> { }, ignored -> { }, () -> { }, errors::add));
+
+            assertThat(result.completed()).isFalse();
+            assertThat(result.toolInvocations()).isEmpty();
+            assertThat(errors).singleElement().satisfies(error ->
+                    assertThat(error).hasMessageContaining("tool input must be an object"));
+            assertThat(bodies).hasSize(1);
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Native Anthropic payload preserves MCP name, description, and recursive schema")

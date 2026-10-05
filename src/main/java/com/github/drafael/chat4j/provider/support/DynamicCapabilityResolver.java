@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.apache.commons.lang3.StringUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -60,6 +61,18 @@ final class DynamicCapabilityResolver {
 
         resolvedSupport.ifPresent(value -> cache(DYNAMIC_IMAGE_SUPPORT_CACHE, key, value));
         return resolvedSupport;
+    }
+
+    static LocalReasoningMetadata resolveLocalReasoningOptions(String provider, String modelId, String baseUrl, String apiKey) {
+        LocalReasoningMetadata metadata = ProviderCapabilityProbes.probeLocalReasoningOptions(baseUrl, modelId, provider, apiKey);
+        ModelCapabilityKey key = capabilityKey(provider, modelId, baseUrl, apiKey);
+        if (key != null) {
+            metadata.options().ifPresentOrElse(
+                    options -> cache(DYNAMIC_REASONING_SUPPORT_CACHE, key, options.levels().stream().anyMatch(ReasoningLevel::enabled)),
+                    () -> DYNAMIC_REASONING_SUPPORT_CACHE.remove(key)
+            );
+        }
+        return metadata;
     }
 
     static Optional<Boolean> resolveDynamicReasoningSupport(

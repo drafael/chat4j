@@ -3,11 +3,14 @@ package com.github.drafael.chat4j.provider.support;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.StreamSupport;
@@ -57,6 +60,44 @@ final class ProviderCapabilityJsonParser {
                     ? capabilities
                     : containsOllamaVisionSignals(root) ? Optional.of(true) : Optional.empty();
         });
+    }
+
+    static LocalReasoningMetadata ollamaReasoningOptions(byte[] payload) {
+        return parse(payload).filter(JsonNode::isObject).map(root -> localReasoningOptions(root.path("thinking"), "values"))
+                .orElse(LocalReasoningMetadata.UNRESOLVED);
+    }
+
+    static LocalReasoningMetadata lmStudioReasoningOptions(byte[] payload, String modelId) {
+        return parse(payload).flatMap(root -> resolveLmStudioModelNode(root, modelId))
+                .map(model -> localReasoningOptions(model.path("capabilities").path("reasoning"), "allowed_options"))
+                .orElse(LocalReasoningMetadata.UNRESOLVED);
+    }
+
+    private static LocalReasoningMetadata localReasoningOptions(JsonNode reasoning, String valuesField) {
+        JsonNode values = reasoning.path(valuesField);
+        if (values.isMissingNode()) {
+            return LocalReasoningMetadata.ABSENT;
+        }
+        if (!values.isArray()) {
+            return LocalReasoningMetadata.UNRESOLVED;
+        }
+        List<ReasoningLevel> levels = StreamSupport.stream(values.spliterator(), false)
+                .map(ProviderCapabilityJsonParser::localReasoningLevel).filter(Objects::nonNull).toList();
+        // Unknown choices must not turn an enabled selection into an apparent Off-only contract.
+        if (levels.isEmpty() || (levels.size() != values.size() && levels.stream().noneMatch(ReasoningLevel::enabled))) {
+            return LocalReasoningMetadata.UNRESOLVED;
+        }
+        ReasoningLevel recommended = localReasoningLevel(reasoning.path("default"));
+        return new LocalReasoningMetadata(
+                ReasoningOptions.of(levels, recommended == null ? ReasoningLevel.MEDIUM : recommended), false);
+    }
+
+    private static ReasoningLevel localReasoningLevel(JsonNode value) {
+        return switch (value.asText()) {
+            case "true", "on" -> ReasoningLevel.MEDIUM;
+            case "false", "off" -> ReasoningLevel.OFF;
+            default -> ReasoningLevel.fromSettingValue(value.asText(), null);
+        };
     }
 
     private static Optional<JsonNode> parse(byte[] payload) {
@@ -167,67 +208,19 @@ final class ProviderCapabilityJsonParser {
                 .findFirst();
     }
 
-
-    static Optional<Boolean> resolveImageSupportFromModelsList(JsonNode root, String modelId) {
-        JsonNode dataNode = root.path("data");
-        JsonNode modelsNode = dataNode.isArray() ? dataNode : root;
-        if (!modelsNode.isArray()) {
-            return Optional.empty();
-        }
-
-        String normalizedModelId = normalize(modelId);
-        return StreamSupport.stream(modelsNode.spliterator(), false)
-                .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
-                .map(ProviderCapabilityJsonParser::resolveImageSupportFromNode)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .findFirst();
-    }
-
-    static Optional<Boolean> resolveReasoningSupportFromModelsList(JsonNode root, String modelId) {
-        JsonNode dataNode = root.path("data");
-        JsonNode modelsNode = dataNode.isArray() ? dataNode : root;
-        if (!modelsNode.isArray()) {
-            return Optional.empty();
-        }
-
-        String normalizedModelId = normalize(modelId);
-        return StreamSupport.stream(modelsNode.spliterator(), false)
-                .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
-                .map(ProviderCapabilityJsonParser::resolveReasoningSupportFromNode)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .findFirst();
-    }
-
-    static Optional<Boolean> resolveToolSupportFromModelsList(JsonNode root, String modelId) {
-        JsonNode dataNode = root.path("data");
-        JsonNode modelsNode = dataNode.isArray() ? dataNode : root;
-        if (!modelsNode.isArray()) {
-            return Optional.empty();
-        }
-
-        String normalizedModelId = normalize(modelId);
-        return StreamSupport.stream(modelsNode.spliterator(), false)
-                .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
-                .map(ProviderCapabilityJsonParser::resolveToolSupportFromNode)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .findFirst();
-    }
-
-    static Optional<Boolean> resolveNativeWebSearchSupportFromModelsList(JsonNode root, String modelId) {
-        JsonNode dataNode = root.path("data");
-        JsonNode modelsNode = dataNode.isArray() ? dataNode : root;
-        if (!modelsNode.isArray()) {
-            return Optional.empty();
-        }
-
-        String normalizedModelId = normalize(modelId);
-        return resolveNativeWebSearchSignals(StreamSupport.stream(modelsNode.spliterator(), false)
-                .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
-                .map(ProviderCapabilityJsonParser::resolveNativeWebSearchSupportFromNode)
-                .toList());
+    static Optional<Boolean> modelsNativeWebSearchSupport(byte[] payload, String modelId) {
+        return parse(payload).flatMap(root -> {
+            JsonNode data = root.path("data");
+            JsonNode models = data.isArray() ? data : root;
+            if (!models.isArray()) {
+                return Optional.empty();
+            }
+            String normalizedModelId = normalize(modelId);
+            return resolveNativeWebSearchSignals(StreamSupport.stream(models.spliterator(), false)
+                    .filter(model -> modelMatches(model, normalizedModelId))
+                    .map(ProviderCapabilityJsonParser::resolveNativeWebSearchSupportFromNode)
+                    .toList());
+        });
     }
 
     static Optional<Boolean> resolveImageSupportFromNode(JsonNode node) {

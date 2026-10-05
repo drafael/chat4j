@@ -21,6 +21,7 @@ import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.openai.client.OpenAIClient;
+import com.openai.core.JsonField;
 import com.openai.core.JsonValue;
 import com.openai.core.http.StreamResponse;
 import com.openai.models.ReasoningEffort;
@@ -1056,18 +1057,72 @@ class OpenAiChatCompletionClientTest {
 
     @ParameterizedTest
     @CsvSource({"MEDIUM, medium", "HIGH, high", "OFF,"})
-    @DisplayName("Non-Claude OpenRouter models retain their existing OpenAI-style reasoning settings")
-    void streamCompletion_whenOpenRouterModelIsNotClaude_preservesExistingHints(ReasoningLevel level, String effort) throws Exception {
-        Map<?, ?> request = captureOpenRouterRequest("openai/gpt-5", level);
+    @DisplayName("OpenRouter models use unified reasoning controls including explicit disabling")
+    void streamCompletion_whenOpenRouterModelIsNotClaude_sendsUnifiedHints(ReasoningLevel level, String effort) throws Exception {
+        Map<?, ?> request = captureOpenRouterRequest("openai/gpt-5.5", level);
 
-        assertThat(request.get("reasoning_effort")).isEqualTo(effort);
-        assertThat(request.get("reasoning")).isNull();
+        assertThat(request.get("reasoning_effort")).isNull();
+        assertThat(request.get("reasoning")).isEqualTo(level.enabled()
+                ? Map.of("effort", effort, "exclude", false) : Map.of("enabled", false));
         assertThat(request.get("thinking")).isNull();
     }
 
     @ParameterizedTest
     @CsvSource({
+            "openai/gpt-5, MINIMAL, minimal",
+            "openai/gpt-6-sol, MAX, max",
+            "google/gemini-3.8-flash, LOW, low",
+            "google/gemini-3.5-flash-lite, MINIMAL, minimal",
+            "deepseek/deepseek-v4-pro, EXTRA_HIGH, xhigh",
+            "deepseek/deepseek-v4.1-flash, MAX, max",
+            "mistralai/mistral-small-2603, HIGH, high",
+            "x-ai/grok-4.3, LOW, low"
+    })
+    @DisplayName("OpenRouter preserves the selected route effort without leaking native-provider parameters")
+    void streamCompletion_reviewedOpenRouterModels_sendsExactRouteEffort(String model, ReasoningLevel level, String effort) throws Exception {
+        Map<?, ?> request = captureOpenRouterRequest(model, level);
+        assertThat(request.get("reasoning")).isEqualTo(Map.of("effort", effort, "exclude", false));
+        assertThat(request.keySet()).extracting(Object::toString).doesNotContain("reasoning_effort", "thinking", "output_config", "think");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "OpenAI, gpt-5.5, OFF, none",
+            "OpenAI, gpt-5, MINIMAL, minimal",
+            "Google AI, gemini-2.5-flash, OFF, none",
+            "Google AI, gemini-3.8-flash, HIGH, high",
+            "Mistral, mistral-small-latest, OFF, none",
+            "Mistral, mistral-small-latest, HIGH, high",
+            "Mistral, zai-glm-5-3, MAX, max",
+            "xAI, grok-4.3, OFF, none",
+            "DeepSeek, deepseek-flash, LOW, low",
+            "DeepSeek, deepseek-flash, MAX, max"
+    })
+    @DisplayName("Native compatible routes serialize distinct selected efforts and explicit disabling")
+    void streamWithChatCompletions_verifiedModel_serializesEffort(String provider, String model, ReasoningLevel level, String effort) throws Exception {
+        var params = captureChatCompletionParams(runtime(provider, model, "http://127.0.0.1:1/v1"), Message.user("question"), level);
+        assertThat(params.reasoningEffort()).contains(ReasoningEffort.of(effort));
+        if (provider.equals("DeepSeek")) {
+            assertThat(jsonValue(params._additionalBodyProperties(), "thinking")).isEqualTo(Map.of("type", "enabled"));
+        }
+    }
+
+    @Test
+    @DisplayName("DeepSeek Off sends a real disable rather than omitting the thinking parameter")
+    void streamWithChatCompletions_deepSeekOff_disablesThinking() throws Exception {
+        var params = captureChatCompletionParams(runtime("DeepSeek", "deepseek-flash", "http://127.0.0.1:1/v1"), Message.user("question"), ReasoningLevel.OFF);
+        assertThat(params.reasoningEffort()).isEmpty();
+        assertThat(jsonValue(params._additionalBodyProperties(), "thinking")).isEqualTo(Map.of("type", "disabled"));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
             "MiniMaxAI/MiniMax-M3, MEDIUM,, true, false",
+            "deepseek-ai/DeepSeek-V4-Pro-0813, HIGH, high,, false",
+            "deepseek-ai/DeepSeek-V4-Pro-0813, MAX, max,, false",
+            "deepseek-ai/DeepSeek-V4-Pro-0813, OFF,, false, false",
+            "moonshotai/Kimi-K3, OFF,, false, false",
+            "moonshotai/Kimi-K3, MAX, max,, false",
             "MiniMaxAI/MiniMax-M3, HIGH,, true, false",
             "moonshotai/Kimi-K3, MEDIUM, high,, false",
             "moonshotai/Kimi-K3, HIGH, high,, false",
@@ -1125,16 +1180,16 @@ class OpenAiChatCompletionClientTest {
     }
 
     @Test
-    @DisplayName("Kimi K3 reasoning off uses the lowest supported effort")
-    void applyChatCompletionsThinkingHints_whenKimiK3ReasoningIsOff_sendsLowEffort() throws Exception {
+    @DisplayName("Together Kimi K3 supports explicit reasoning disabling")
+    void applyChatCompletionsThinkingHints_whenKimiK3ReasoningIsOff_sendsDisabledThinking() throws Exception {
         Map<String, JsonValue> properties = togetherReasoningProperties(
                 "moonshotai/Kimi-K3",
                 ReasoningLevel.OFF,
                 "https://api.together.ai/v1"
         );
 
-        assertThat(jsonValue(properties, "reasoning_effort")).isEqualTo("low");
-        assertThat(properties).doesNotContainKey("reasoning");
+        assertThat(properties).doesNotContainKey("reasoning_effort");
+        assertThat(jsonValue(properties, "reasoning")).isEqualTo(Map.of("enabled", false));
     }
 
     @Test
@@ -1346,18 +1401,65 @@ class OpenAiChatCompletionClientTest {
         assertThat(tokens).containsExactly("thinking");
     }
 
+    @Test
+    @DisplayName("Mistral streaming thinking chunks remain separate from answer text")
+    void streamCompletion_mistralChunkedContent_emitsThinkingAndAnswer() throws Exception {
+        Map<?, ?> request = captureCompatibleRequest("Mistral", "mistral-small-latest", ReasoningLevel.HIGH);
+        assertThat(request.get("reasoning_effort")).isEqualTo("high");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"Ollama, OFF, none", "Ollama, MEDIUM, medium", "Ollama, ULTRA, ultra", "Ollama, EXTRA_HIGH, xhigh",
+            "LM Studio, OFF, none", "LM Studio, MEDIUM, medium"})
+    @DisplayName("Local OpenAI-compatible endpoints receive effort fields, never the ignored think flag")
+    void streamCompletion_localThinking_sendsRecognizedControl(String provider, ReasoningLevel level, String effort) throws Exception {
+        Map<?, ?> request = captureCompatibleRequest(provider, "local-model", level);
+        assertThat(request.get("reasoning_effort")).isEqualTo(effort);
+        assertThat(request.get("think")).isNull();
+    }
+
+    @Test
+    @DisplayName("OpenAI Responses explicitly disables reasoning on models that default to thinking")
+    void createResponsesParams_supportedOff_sendsNoneWithoutSummary() {
+        var params = subject.createResponsesParams(runtime("OpenAI", "gpt-5.5", "http://127.0.0.1:1/v1"), emptyList(), ReasoningLevel.OFF, false);
+        assertThat(params.reasoning()).hasValueSatisfying(reasoning -> {
+            assertThat(reasoning.effort()).contains(ReasoningEffort.NONE);
+            assertThat(reasoning.summary()).isEmpty();
+        });
+    }
+
     private Map<?, ?> captureOpenRouterRequest(String model, ReasoningLevel level) throws Exception {
+        return captureCompatibleRequest("OpenRouter", model, level);
+    }
+
+    private Map<?, ?> captureCompatibleRequest(String provider, String model, ReasoningLevel level) throws Exception {
         var capturedRequest = new AtomicReference<Map<?, ?>>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             capturedRequest.set(JsonCodec.standard().read(exchange.getRequestBody().readAllBytes(), Map.class));
+            String delta = provider.equals("Mistral")
+                    ? "\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"Checking the answer.\"}]},{\"type\":\"text\",\"text\":\"Answer\"}]"
+                    : "\"reasoning\":\"Checking the answer.\",\"content\":\"Answer\"";
             byte[] body = """
-                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"reasoning":"Checking the answer.","content":"Answer"},"finish_reason":"stop"}]}
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{%s},"finish_reason":"stop"}]}
 
                     data: [DONE]
 
-                    """.getBytes(StandardCharsets.UTF_8);
+                    """.formatted(delta).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/", exchange -> {
+            String metadata = provider.equals("Ollama")
+                    ? """
+                      {"thinking":{"values":[false,"minimal","low","medium","high","xhigh","max","ultra"],"default":"medium"}}
+                      """
+                    : """
+                      {"models":[{"key":"local-model","capabilities":{"reasoning":{"allowed_options":["off","on"],"default":"on"}}}]}
+                      """;
+            byte[] body = metadata.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -1368,7 +1470,7 @@ class OpenAiChatCompletionClientTest {
         try {
             String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
             subject.streamCompletion(
-                    runtime("OpenRouter", model, endpoint),
+                    runtime(provider, model, endpoint),
                     List.of(Message.user("question")),
                     level,
                     tokens::add,
@@ -1426,6 +1528,9 @@ class OpenAiChatCompletionClientTest {
         when(choice.finishReason()).thenReturn(Optional.of(mock(ChatCompletionChunk.Choice.FinishReason.class)));
         when(choice._additionalProperties()).thenReturn(emptyMap());
         when(delta.content()).thenReturn(Optional.of("done"));
+        if (runtime.descriptor().name().equals("Mistral")) {
+            when(delta._content()).thenReturn(JsonField.of("done"));
+        }
         when(delta._additionalProperties()).thenReturn(emptyMap());
         var captor = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
 

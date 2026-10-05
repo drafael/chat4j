@@ -47,9 +47,9 @@ import com.github.drafael.chat4j.persistence.conversation.ConversationRepository
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.api.Message;
-import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
@@ -68,13 +68,14 @@ import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.DeepSeekNativeWebSearchSupport;
+import com.github.drafael.chat4j.provider.support.LocalReasoningMetadata;
+import com.github.drafael.chat4j.provider.support.ModelFilters;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.NativeWebSearchOutcome;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
-import com.github.drafael.chat4j.provider.support.ClaudeReasoningSupport;
 import com.github.drafael.chat4j.provider.support.WebSearchSourceUrlNormalizer;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
@@ -273,6 +274,7 @@ public class ChatPanel extends JPanel {
     private boolean requestedWebSearch;
     private StagedRuntimeLoad stagedRuntimeLoad;
     private Runnable pendingWebSearchOptOut;
+    private Runnable pendingReasoningRetry;
     private final Map<Long, SendJob> activeSendJobs = new ConcurrentHashMap<>();
     private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
     private final Set<Thread> shutdownPreparationWorkers = ConcurrentHashMap.newKeySet();
@@ -782,6 +784,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void prepareProviderModels(List<ProviderRegistry.ProviderDef> providers, long scopeVersion) {
+        if (!modelCacheService.isCodexLocalModelsLoaded()
+                && providers.stream().anyMatch(provider -> CODEX_PROVIDER_NAME.equals(provider.name()))) {
+            modelCacheService.refreshCodexLocalModels();
+        }
         providers.forEach(provider -> modelCacheService.synchronizeScope(
                 provider.name(),
                 provider.baseUrl(),
@@ -805,40 +811,21 @@ public class ChatPanel extends JPanel {
             return true;
         }
 
-        if (selectedProviderName != null && !selectedModelUsable) {
-            clearSelectedModel();
-        }
-
-        // Prefer cached models fetched in previous sessions, but never reuse an invalidated cache.
-        if (!providerMap.isEmpty()) {
-            providerMap.values().stream()
-                    .map(providerDef -> new ProviderModelSelection(
-                        providerDef.name(),
-                        initialProviderModels(providerDef)
-                    )
-                    )
-                    .filter(selection -> !selection.models().isEmpty())
-                    .findFirst()
-                    .ifPresent(selection -> selectModel(selection.providerName(), selection.models().getFirst()));
-
-            if (selectedProviderName != null && selectedModelId != null) {
-                return true;
-            }
-
-            // Fallback to first provider that has seeded models.
-            providerMap.values().stream()
-                    .map(providerDef -> new ProviderModelSelection(
-                        providerDef.name(),
-                        sanitizeModelIds(providerDef.name(), providerDef.seedModels())
-                    )
-                    )
-                    .filter(selection -> !selection.models().isEmpty())
-                    .findFirst()
-                    .ifPresent(selection -> selectModel(selection.providerName(), selection.models().getFirst()));
-            return true;
-        }
-
-        clearSelectedModel();
+        // Choose the replacement before clearing controls so supported reasoning survives the refresh.
+        Stream.concat(
+                providerMap.values().stream().map(providerDef -> new ProviderModelSelection(
+                        providerDef.name(), initialProviderModels(providerDef)
+                )),
+                providerMap.values().stream().map(providerDef -> new ProviderModelSelection(
+                        providerDef.name(), sanitizeModelIds(providerDef.name(), providerDef.seedModels())
+                ))
+        )
+                .filter(selection -> !selection.models().isEmpty())
+                .findFirst()
+                .ifPresentOrElse(
+                        selection -> selectModel(selection.providerName(), selection.models().getFirst()),
+                        this::clearSelectedModel
+                );
         return true;
     }
 
@@ -851,13 +838,15 @@ public class ChatPanel extends JPanel {
             return false;
         }
         installedProviderScope = scopeVersion;
-        if (providerModelsChanged(previousProviderMap, providers)) {
-            notifyModelCatalogChanged();
-        }
         ProviderRegistry.ProviderDef selectedProvider = providerMap.get(selectedProviderName);
         if (selectedProviderName != null
                 && (selectedProvider == null || !isSelectedModelUsable(selectedProvider))) {
             clearSelectedModel();
+        } else if (selectedProvider != null && StringUtils.isNotBlank(selectedModelId)) {
+            selectModel(selectedProviderName, selectedModelId);
+        }
+        if (providerModelsChanged(previousProviderMap, providers)) {
+            notifyModelCatalogChanged();
         }
         return true;
     }
@@ -891,12 +880,13 @@ public class ChatPanel extends JPanel {
     }
 
     private void clearSelectedModel() {
+        pendingReasoningRetry = null;
         boolean selectionChanged = selectedProviderName != null || selectedModelId != null;
         providerSelectionCounter.incrementAndGet();
         selectedProviderName = null;
         selectedModelId = null;
         modelSelectorBtn.setSelection("", "");
-        inputBar.setThinkingAvailable(false);
+        inputBar.setReasoningOptions(ReasoningOptions.UNAVAILABLE);
         inputBar.setWebSearchPresentation(false, false, false);
         inputBar.setAgentModeAvailable(false);
         refreshComposerAvailability();
@@ -906,6 +896,9 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean isSelectedModelUsable(ProviderRegistry.ProviderDef providerDef) {
+        if (ModelFilters.isRetiredChatModelId(selectedModelId)) {
+            return false;
+        }
         Optional<List<String>> usableModels = modelCacheService.findUsableModels(
                 providerDef.name(),
                 providerDef.baseUrl()
@@ -951,7 +944,7 @@ public class ChatPanel extends JPanel {
                 this::requestModelSelection,
                 this::updateProviderModelsFromPopup,
                 this::notifyModelFavoritesChanged,
-                this::notifyModelCatalogChanged,
+                this::handleModelCatalogChanged,
                 credentialResolver
             );
         }
@@ -1052,7 +1045,7 @@ public class ChatPanel extends JPanel {
                 conversationId,
                 runtime,
                 new ArrayList<>(history),
-                inputBar.getEffectiveReasoningLevel(),
+                inputBar.getReasoningLevel(),
                 requestedWebSearch,
                 agentModeEnabled,
                 agentProjectRoot,
@@ -1136,7 +1129,7 @@ public class ChatPanel extends JPanel {
                 original.conversationId,
                 runtime,
                 original.historySnapshot,
-                inputBar.getEffectiveReasoningLevel(),
+                inputBar.getReasoningLevel(),
                 requestedWebSearch,
                 inputBar.isAgentModeEnabled(),
                 inputBar.getAgentProjectRoot(),
@@ -1418,7 +1411,7 @@ public class ChatPanel extends JPanel {
                 conversationId,
                 runtime,
                 new ArrayList<>(history),
-                inputBar.getEffectiveReasoningLevel(),
+                inputBar.getReasoningLevel(),
                 requestedWebSearch,
                 inputBar.isAgentModeEnabled(),
                 inputBar.getAgentProjectRoot(),
@@ -2288,8 +2281,11 @@ public class ChatPanel extends JPanel {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             nativeWebSearchOutcome = NativeWebSearchOutcome.UNSUPPORTED;
-            inputBar.setAvailableReasoningLevels(ReasoningLevel.standardLevels());
-            inputBar.setThinkingAvailable(false);
+            if (StringUtils.isBlank(selectedModelId)) {
+                inputBar.setReasoningOptions(ReasoningOptions.UNAVAILABLE);
+            } else {
+                inputBar.beginReasoningRefresh();
+            }
             applyWebSearchPresentation();
             inputBar.setAgentModeAvailable(false);
             return;
@@ -2297,39 +2293,30 @@ public class ChatPanel extends JPanel {
 
         String providerName = providerDef.name();
         String modelId = selectedModelId;
-        ProviderCapabilities capabilities = providerDef.capabilities();
         boolean togetherProvider = TogetherModelSupport.isTogether(providerName);
         boolean initialSupportsThinking = togetherProvider
                 ? TogetherModelSupport.supportsReasoning(providerDef.baseUrl(), modelId)
-                : ProviderCapabilityResolver.supportsReasoning(capabilities, providerName, modelId);
+                : ProviderCapabilityResolver.supportsReasoning(providerName, modelId);
         boolean initialSupportsTools = togetherProvider
                 ? TogetherModelSupport.supportsTools(providerDef.baseUrl(), modelId)
-                : ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId);
-        List<ReasoningLevel> availableReasoningLevels;
-        if (togetherProvider) {
-            availableReasoningLevels = TogetherModelSupport.availableReasoningLevels(providerDef.baseUrl(), modelId);
-        } else if (Strings.CS.equals(providerName, "Anthropic")
-                || (Strings.CS.equals(providerName, "OpenRouter") && modelId.startsWith("anthropic/claude-"))) {
-            availableReasoningLevels = ClaudeReasoningSupport.availableLevels(
-                    modelId,
-                    Strings.CS.equals(providerName, "OpenRouter")
-            );
-        } else {
-            availableReasoningLevels = modelCacheService.findCodexReasoningLevels(providerName, modelId)
-                    .map(levels -> Stream.concat(Stream.of(ReasoningLevel.OFF), levels.stream()).distinct().toList())
-                    .orElse(ReasoningLevel.standardLevels());
-        }
-        inputBar.setAvailableReasoningLevels(availableReasoningLevels);
-        inputBar.setThinkingAvailable(initialSupportsThinking);
+                : ProviderCapabilityResolver.supportsToolInvocation(providerName, modelId);
         applyNativeWebSearchOutcome(resolveCachedNativeWebSearchOutcome(providerDef, modelId));
         inputBar.setAgentModeAvailable(!nativeWebSearchOutcome.required() && initialSupportsTools);
 
+        if (CODEX_PROVIDER_NAME.equals(providerName) && !modelCacheService.isCodexLocalModelsLoaded()) {
+            inputBar.beginReasoningRefresh();
+            offerReasoningRetry(selectionId, providerName, modelId);
+            return;
+        }
+        boolean localReasoningCatalog = Strings.CS.equalsAny(providerName, "Ollama", "LM Studio");
         if (StringUtils.isBlank(providerDef.baseUrl())
-                || nativeWebSearchOutcome != NativeWebSearchOutcome.PENDING
+                || (!localReasoningCatalog && nativeWebSearchOutcome != NativeWebSearchOutcome.PENDING)
                 || Strings.CS.equals(providerName, COPILOT_PROVIDER_NAME)) {
+            inputBar.setReasoningOptions(reasoningOptions(providerDef, modelId, initialSupportsThinking));
             return;
         }
 
+        inputBar.beginReasoningRefresh();
         String baseUrl = providerDef.baseUrl();
         Thread refreshThread = Thread.ofVirtual().name("chat4j-provider-capabilities").unstarted(() -> {
             try {
@@ -2344,15 +2331,14 @@ public class ChatPanel extends JPanel {
                         providerDef.defaultBaseUrl(),
                         apiKey
                 );
-                boolean supportsThinking = ProviderCapabilityResolver.supportsReasoning(
-                        capabilities,
-                        providerName,
-                        modelId,
-                        baseUrl,
-                        apiKey
-                );
+                LocalReasoningMetadata localMetadata = ProviderCapabilityResolver.resolveLocalReasoningOptions(
+                        providerName, modelId, baseUrl, apiKey);
+                Optional<ReasoningOptions> localOptions = localMetadata.options();
+                Optional<Boolean> supportsThinking = localOptions.map(options -> options.levels().stream().anyMatch(ReasoningLevel::enabled))
+                        .or(() -> localMetadata.allowsLegacyFallback()
+                                ? ProviderCapabilityResolver.resolveReasoningSupport(providerName, modelId, baseUrl, apiKey)
+                                : Optional.empty());
                 boolean supportsTools = ProviderCapabilityResolver.supportsToolInvocation(
-                        capabilities,
                         providerName,
                         modelId,
                         baseUrl,
@@ -2363,12 +2349,21 @@ public class ChatPanel extends JPanel {
                         return;
                     }
                     applyNativeWebSearchOutcome(resolved);
-                    inputBar.setThinkingAvailable(supportsThinking);
                     inputBar.setAgentModeAvailable(!resolved.required() && supportsTools);
+                    if (supportsThinking.isPresent()) {
+                        inputBar.setReasoningOptions(localOptions.orElseGet(() -> reasoningOptions(providerDef, modelId, supportsThinking.get())));
+                    } else {
+                        offerReasoningRetry(selectionId, providerName, modelId);
+                    }
                 });
             } catch (Exception e) {
                 if (!Thread.currentThread().isInterrupted()) {
                     log.debug("Failed to refresh capabilities for {}::{}", providerName, modelId, e);
+                    SwingUtilities.invokeLater(() -> {
+                        if (capabilityRefreshCurrent(selectionId, providerName, modelId)) {
+                            offerReasoningRetry(selectionId, providerName, modelId);
+                        }
+                    });
                 }
             } finally {
                 capabilityRefreshThread.compareAndSet(Thread.currentThread(), null);
@@ -2376,6 +2371,35 @@ public class ChatPanel extends JPanel {
         });
         capabilityRefreshThread.set(refreshThread);
         refreshThread.start();
+    }
+
+    private void offerReasoningRetry(long selectionId, String providerName, String modelId) {
+        pendingReasoningRetry = () -> {
+            if (!capabilityRefreshCurrent(selectionId, providerName, modelId) || !inputBar.isReasoningPending()) {
+                return;
+            }
+            pendingReasoningRetry = null;
+            inputBar.clearValidationMessage();
+            if (CODEX_PROVIDER_NAME.equals(providerName) && !modelCacheService.isCodexLocalModelsLoaded()) {
+                refreshProviders();
+            } else {
+                updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
+            }
+        };
+        inputBar.showValidationMessage("Unable to check reasoning options.", "Retry", pendingReasoningRetry);
+    }
+
+    private ReasoningOptions reasoningOptions(ProviderRegistry.ProviderDef providerDef, String modelId, boolean supportsThinking) {
+        Optional<ReasoningOptions> catalogOptions = modelCacheService.findCodexReasoningOptions(providerDef.name(), modelId);
+        if (catalogOptions.isEmpty() && !supportsThinking) {
+            return ReasoningOptions.UNAVAILABLE;
+        }
+        return ProviderCapabilityResolver.reasoningOptions(
+                providerDef.name(),
+                modelId,
+                providerDef.baseUrl(),
+                catalogOptions.orElseGet(() -> ReasoningOptions.of(ReasoningLevel.standardLevels()))
+        );
     }
 
     private void handleWebSearchIntent(boolean enabled) {
@@ -2422,6 +2446,14 @@ public class ChatPanel extends JPanel {
         }
         if (selectedProviderName != null && credentialChangesPending.containsKey(selectedProviderName)) {
             inputBar.showValidationMessage("Provider credentials are still updating. Try again in a moment.");
+            return false;
+        }
+        if (inputBar.isReasoningPending()) {
+            if (pendingReasoningRetry == null) {
+                inputBar.showValidationMessage("Reasoning options are still loading. Try again in a moment.");
+            } else {
+                inputBar.showValidationMessage("Unable to check reasoning options.", "Retry", pendingReasoningRetry);
+            }
             return false;
         }
         if (requestedWebSearch && nativeWebSearchOutcome == NativeWebSearchOutcome.PENDING) {
@@ -2630,6 +2662,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void cancelCapabilityRefresh() {
+        pendingReasoningRetry = null;
         Thread refreshThread = capabilityRefreshThread.get();
         if (refreshThread != null) {
             refreshThread.interrupt();
@@ -5581,6 +5614,9 @@ public class ChatPanel extends JPanel {
     }
 
     private String safeModelId(String providerName, String modelId) {
+        if (ModelFilters.isRetiredChatModelId(modelId)) {
+            return null;
+        }
         String safeModelId = TogetherModelSupport.isTogether(providerName) ? StringUtils.trim(modelId) : modelId;
         if (TogetherModelSupport.isTogether(providerName)
                 && !TogetherModelSupport.isServerlessChatModel(safeModelId)) {
@@ -6081,12 +6117,16 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void notifyModelCatalogChanged() {
+    private void handleModelCatalogChanged() {
         if (installedProviderScope >= 0L
                 && Strings.CS.equalsAny(selectedProviderName, COPILOT_PROVIDER_NAME, CODEX_PROVIDER_NAME)
                 && providerMap.containsKey(selectedProviderName)) {
             updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
         }
+        notifyModelCatalogChanged();
+    }
+
+    private void notifyModelCatalogChanged() {
         if (modelCatalogChangedListener != null) {
             modelCatalogChangedListener.run();
         }
@@ -6168,6 +6208,10 @@ public class ChatPanel extends JPanel {
                 agentModeEnabled,
                 agentCorrectionRequired
         );
+    }
+
+    public boolean isConversationRuntimeLoadStaged() {
+        return stagedRuntimeLoad != null;
     }
 
     public void commitConversationRuntimeLoad(UUID conversationId, long loadRequestId) {

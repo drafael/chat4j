@@ -1,14 +1,16 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.ReasoningOptions;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +26,125 @@ class ProviderCapabilityResolverTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String TEST_API_KEY = "test-key";
     private static final String TOGETHER_BASE_URL = "https://api.together.ai/v1";
+
+    @ParameterizedTest
+    @CsvSource({
+            "gpt-5, MINIMAL LOW MEDIUM HIGH, MEDIUM",
+            "gpt-5.1, OFF LOW MEDIUM HIGH, OFF",
+            "gpt-5.2, OFF LOW MEDIUM HIGH EXTRA_HIGH, OFF",
+            "gpt-5.4-2026-03-05, OFF LOW MEDIUM HIGH EXTRA_HIGH, OFF",
+            "gpt-5.5, OFF LOW MEDIUM HIGH EXTRA_HIGH, MEDIUM",
+            "gpt-6-astra, LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
+            "gpt-6.1-sol, LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
+            "gpt-6-sol, OFF LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
+            "gpt-6-luna, OFF LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM"
+    })
+    @DisplayName("Verified OpenAI choices include Minimal and explicit none only where supported")
+    void reasoningOptions_knownOpenAiModel_usesVerifiedRange(String model, String levels, ReasoningLevel recommended) {
+        var subject = ProviderCapabilityResolver.reasoningOptions("OpenAI", model, null, ReasoningOptions.UNAVAILABLE);
+        assertThat(subject.levels()).extracting(ReasoningLevel::name).containsExactly(levels.split(" "));
+        assertThat(subject.defaultLevel()).isEqualTo(recommended);
+        assertThat(ProviderCapabilityResolver.supportsReasoning("OpenAI", model)).isTrue();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "Google AI, gemini-3.8-flash, LOW MEDIUM HIGH, MEDIUM",
+            "Google AI, gemini-3.1-pro-preview, LOW MEDIUM HIGH, HIGH",
+            "Google AI, gemini-3.5-flash-lite, MINIMAL LOW MEDIUM HIGH, MINIMAL",
+            "Google AI, gemini-3.1-flash-image, MINIMAL HIGH, MINIMAL",
+            "Google AI, gemini-3.1-flash-image-preview, MINIMAL HIGH, MINIMAL",
+            "Google AI, gemini-3.1-flash-lite-image, MINIMAL HIGH, MINIMAL",
+            "DeepSeek, deepseek-flash, OFF LOW HIGH MAX, HIGH",
+            "Mistral, mistral-small-latest, OFF HIGH, HIGH",
+            "Mistral, zai-glm-5-3, LOW HIGH MAX, HIGH",
+            "OpenRouter, openai/gpt-5, MINIMAL LOW MEDIUM HIGH, MEDIUM",
+            "OpenRouter, openai/gpt-6.1-sol, LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
+            "OpenRouter, openai/gpt-6-sol:batch, OFF LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
+            "OpenRouter, google/gemini-3.1-pro-preview, LOW MEDIUM HIGH, MEDIUM",
+            "OpenRouter, deepseek/deepseek-v4-pro, OFF HIGH EXTRA_HIGH, HIGH",
+            "OpenRouter, deepseek/deepseek-v4.1-flash, OFF LOW HIGH MAX, HIGH",
+            "OpenRouter, mistralai/mistral-small-2603, OFF HIGH, HIGH",
+            "OpenRouter, x-ai/grok-4.3, OFF LOW MEDIUM HIGH, LOW",
+            "Groq, openai/gpt-oss-20b, LOW MEDIUM HIGH, MEDIUM",
+            "Groq, openai/gpt-oss-120b, LOW MEDIUM HIGH, MEDIUM",
+            "Groq, qwen/qwen3.8-27b, OFF LOW MEDIUM HIGH, OFF",
+            "xAI, grok-4.3, OFF LOW MEDIUM HIGH EXTRA_HIGH, LOW",
+            "xAI, grok-4.7, LOW MEDIUM HIGH EXTRA_HIGH, HIGH"
+    })
+    @DisplayName("Verified provider routes retain supported selections and use their documented fallback")
+    void reasoningOptions_knownProviderModel_matchesEncodableContract(
+            String provider, String model, String levels, ReasoningLevel recommended
+    ) {
+        var subject = ProviderCapabilityResolver.reasoningOptions(provider, model, null, ReasoningOptions.UNAVAILABLE);
+        assertThat(subject.levels()).extracting(ReasoningLevel::name).containsExactly(levels.split(" "));
+        assertThat(subject.select(ReasoningLevel.ULTRA)).isEqualTo(recommended);
+        assertThat(subject.select(ReasoningLevel.HIGH)).isEqualTo(ReasoningLevel.HIGH);
+        assertThat(ProviderCapabilityResolver.supportsReasoning(provider, model)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gpt-4o-mini", "gpt-4o-mini-2024-07-18", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"})
+    @DisplayName("Known non-reasoning OpenAI models have no selectable effort and receive no reasoning parameter")
+    void reasoningOptions_knownNonReasoningOpenAiModel_omitsUnsupportedControls(String model) {
+        var subject = ProviderCapabilityResolver.reasoningOptions("OpenAI", model, null, ReasoningOptions.UNAVAILABLE);
+        assertThat(subject).isEqualTo(ReasoningOptions.UNAVAILABLE);
+        assertThat(ProviderCapabilityResolver.resolveReasoningSupport("OpenAI", model, null, null)).contains(false);
+        assertThat(OpenAiReasoningSupport.properties("OpenAI", model, null, null, ReasoningLevel.OFF)).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"sonar-reasoning-pro", "sonar-deep-research"})
+    @DisplayName("Native Sonar reasoning is fixed because its client does not encode effort or disable reasoning")
+    void reasoningOptions_nativeSonar_hasOneEnabledChoice(String model) {
+        var subject = ProviderCapabilityResolver.reasoningOptions("Perplexity", model, null, ReasoningOptions.UNAVAILABLE);
+        assertThat(subject.levels()).containsExactly(ReasoningLevel.MEDIUM);
+        assertThat(subject.select(ReasoningLevel.OFF)).isEqualTo(ReasoningLevel.MEDIUM);
+    }
+
+    @Test
+    @DisplayName("Codex options use the advertised choices without adding a synthetic Off")
+    void reasoningOptions_codexCatalog_preservesChoicesAndUsesMedium() {
+        var subject = ProviderCapabilityResolver.reasoningOptions(
+                "OpenAI Codex", "gpt-5.6-sol", null,
+                ReasoningOptions.of(List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.ULTRA))
+        );
+
+        assertThat(subject.levels()).containsExactly(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.ULTRA);
+        assertThat(subject.defaultLevel()).isEqualTo(ReasoningLevel.MEDIUM);
+    }
+
+    @Test
+    @DisplayName("An explicitly empty Codex effort catalog does not expand into generic effort choices")
+    void reasoningOptions_emptyCodexCatalog_hidesControls() {
+        var subject = ProviderCapabilityResolver.reasoningOptions("OpenAI Codex", "model", null, ReasoningOptions.UNAVAILABLE);
+
+        assertThat(subject).isEqualTo(ReasoningOptions.UNAVAILABLE);
+    }
+
+    @Test
+    @DisplayName("Claude options retain native and OpenRouter differences")
+    void reasoningOptions_sonnet55Route_selectsRouteSpecificOptions() {
+        var nativeOptions = ProviderCapabilityResolver.reasoningOptions("Anthropic", "claude-sonnet-5-5", null, ReasoningOptions.UNAVAILABLE);
+        var subject = ProviderCapabilityResolver.reasoningOptions("OpenRouter", "anthropic/claude-sonnet-5.5:batch", null, ReasoningOptions.UNAVAILABLE);
+
+        assertThat(nativeOptions.levels()).contains(ReasoningLevel.OFF);
+        assertThat(subject.levels()).doesNotContain(ReasoningLevel.OFF, ReasoningLevel.ULTRA);
+        assertThat(subject.defaultLevel()).isEqualTo(ReasoningLevel.HIGH);
+    }
+
+    @Test
+    @DisplayName("Together sparse efforts fall back to the lowest enabled choice and custom endpoints remain unavailable")
+    void reasoningOptions_togetherSparseChoices_selectsHighWithoutEnablingCustomEndpoint() {
+        var subject = ProviderCapabilityResolver.reasoningOptions(
+                "Together", "deepseek-ai/DeepSeek-V4-Pro", TOGETHER_BASE_URL, ReasoningOptions.UNAVAILABLE
+        );
+
+        assertThat(subject.levels()).containsExactly(ReasoningLevel.OFF, ReasoningLevel.HIGH, ReasoningLevel.MAX);
+        assertThat(subject.defaultLevel()).isEqualTo(ReasoningLevel.HIGH);
+        assertThat(ProviderCapabilityResolver.reasoningOptions("Together", "deepseek-ai/DeepSeek-V4-Pro", "https://custom.invalid/v1", ReasoningOptions.UNAVAILABLE))
+                .isEqualTo(ReasoningOptions.UNAVAILABLE);
+    }
 
     @Test
     @DisplayName("OpenAI multimodal-style model names are treated as image-capable")
@@ -47,11 +168,18 @@ class ProviderCapabilityResolverTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"gpt-5.4-mini", "claude-sonnet-4.6", "gpt-4.1"})
+    @DisplayName("Copilot model names alone do not establish supported reasoning controls")
+    void supportsReasoning_copilotWithoutEffortEvidence_preservesUnavailableControls(String modelId) {
+        assertThat(ProviderCapabilityResolver.supportsReasoning("GitHub Copilot", modelId)).isFalse();
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"})
     @DisplayName("GPT-6 Codex models expose reasoning support before capability probing")
     void supportsReasoning_whenGpt6CodexModelIsSelected_returnsTrue(String modelId) {
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId
+                "OpenAI Codex", modelId
         )).isTrue();
     }
 
@@ -65,7 +193,7 @@ class ProviderCapabilityResolverTest {
                     ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
             )).isTrue();
             assertThat(ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
+                    "OpenAI Codex", modelId, endpoint(server)
             )).isTrue();
         } finally {
             server.stop(0);
@@ -89,7 +217,7 @@ class ProviderCapabilityResolverTest {
                     ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
             )).isFalse();
             assertThat(ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(), "OpenAI Codex", modelId, endpoint(server)
+                    "OpenAI Codex", modelId, endpoint(server)
             )).isFalse();
         } finally {
             server.stop(0);
@@ -344,7 +472,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Reasoning hints in model names enable reasoning support")
     void supportsReasoning_whenModelNameMatchesFallbackHints_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "OpenAI",
                 "o3-mini"
         );
@@ -356,7 +483,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Claude model hints enable reasoning support")
     void supportsReasoning_whenClaudeModelNameIsUsed_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "Anthropic",
                 "claude-sonnet-4-20250514"
         );
@@ -392,7 +518,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Gemini 3 model hints enable reasoning support")
     void supportsReasoning_whenGemini3ModelNameIsUsed_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "Google AI",
                 "gemini-3-flash-preview"
         );
@@ -404,17 +529,14 @@ class ProviderCapabilityResolverTest {
     @DisplayName("DeepSeek V4 and reasoner model hints enable reasoning support")
     void supportsReasoning_whenDeepSeekReasoningModelNameIsUsed_returnsTrue() {
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-v4-pro"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-v4-flash"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-reasoner"
         )).isTrue();
@@ -424,7 +546,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("DeepSeek chat compatibility model does not expose reasoning support")
     void supportsReasoning_whenDeepSeekChatModelNameIsUsed_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-chat"
         );
@@ -436,12 +557,10 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Perplexity reasoning Sonar models expose reasoning capability")
     void supportsReasoning_whenPerplexityReasoningSonarModelSelected_returnsTrue() {
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "Perplexity",
                 "sonar-reasoning-pro"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "Perplexity",
                 "sonar-deep-research"
         )).isTrue();
@@ -451,7 +570,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Perplexity non-reasoning Sonar models keep reasoning disabled")
     void supportsReasoning_whenPerplexitySearchSonarModelSelected_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "Perplexity",
                 "sonar-pro"
         );
@@ -463,7 +581,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Non-reasoning model hints disable reasoning support")
     void supportsReasoning_whenModelNameMatchesDenyHints_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "OpenAI",
                 "whisper-1"
         );
@@ -489,7 +606,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenRouter",
                     "reasoner-x",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -519,7 +635,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenRouter",
                     "camel-rsn",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -549,7 +664,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenAI",
                     "o3-mini",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -583,7 +697,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "DeepSeek",
                     "list-reasoner",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -613,7 +726,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenRouter",
                     "openrouter-reasoner",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -719,7 +831,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "LM Studio",
                     "openai/gpt-oss-20b",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -842,7 +953,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "Google AI",
                     "gemini-2.5-pro",
                     "http://127.0.0.1:%d/v1beta/openai".formatted(port),
@@ -936,7 +1046,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                    ProviderCapabilities.chatAndModels(),
                     "Google AI",
                     "custom-rsn",
                     "http://127.0.0.1:%d/v1beta/openai".formatted(port),
@@ -953,17 +1062,14 @@ class ProviderCapabilityResolverTest {
     @DisplayName("DeepSeek V4 compatibility model hints enable tool invocation support")
     void supportsToolInvocation_whenDeepSeekModelNameIsUsed_returnsTrue() {
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-v4-pro"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-v4-flash"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-chat"
         )).isTrue();
@@ -996,7 +1102,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Tool-calling model hints enable tool invocation support")
     void supportsToolInvocation_whenModelNameMatchesFallbackHints_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "OpenAI",
                 "gpt-5-mini"
         );
@@ -1008,7 +1113,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Mistral devstral model hints enable tool invocation support")
     void supportsToolInvocation_whenMistralModelMatchesFallbackHints_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "Mistral",
                 "devstral-latest"
         );
@@ -1020,7 +1124,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Non-chat model hints disable tool invocation support")
     void supportsToolInvocation_whenModelNameMatchesDenyHints_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "OpenAI",
                 "whisper-1"
         );
@@ -1032,7 +1135,6 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Unknown providers stay disabled when no tool metadata is available")
     void supportsToolInvocation_whenProviderHasNoHintsAndNoMetadata_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "Custom Provider",
                 "chat-model-v1"
         );
@@ -1046,7 +1148,6 @@ class ProviderCapabilityResolverTest {
         HttpServer server = createUnavailableCapabilityServer();
         try {
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "Ollama",
                     "llama3.2:3b",
                     endpoint(server)
@@ -1064,7 +1165,6 @@ class ProviderCapabilityResolverTest {
         HttpServer server = createUnavailableCapabilityServer();
         try {
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "Ollama",
                     "whisper:latest",
                     endpoint(server)
@@ -1082,7 +1182,6 @@ class ProviderCapabilityResolverTest {
         HttpServer server = createUnavailableCapabilityServer();
         try {
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "LM Studio",
                     "openai/gpt-oss-20b",
                     endpoint(server)
@@ -1100,7 +1199,6 @@ class ProviderCapabilityResolverTest {
         HttpServer server = createUnavailableCapabilityServer();
         try {
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "LM Studio",
                     "whisper:latest",
                     endpoint(server)
@@ -1130,7 +1228,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenRouter",
                     "tool-model",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -1160,7 +1257,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenAI",
                     "gpt-5-mini",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -1196,7 +1292,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "Anthropic",
                     "list-tool-model",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -1226,7 +1321,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "OpenRouter",
                     "params-tool-model",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -1258,7 +1352,6 @@ class ProviderCapabilityResolverTest {
         try {
             int port = server.getAddress().getPort();
             boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                    ProviderCapabilities.chatAndModels(),
                     "Custom Provider",
                     "custom-tool-model",
                     "http://127.0.0.1:%d/v1".formatted(port)
@@ -1292,12 +1385,10 @@ class ProviderCapabilityResolverTest {
                 "google/gemini-2.5-flash"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "OpenRouter",
                 "openai/gpt-5-mini"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "OpenRouter",
                 "anthropic/claude-sonnet-4-20250514"
         )).isTrue();
@@ -1699,20 +1790,24 @@ class ProviderCapabilityResolverTest {
                 """))).contains(false);
     }
 
-    @Test
-    @DisplayName("Negative native-search evidence wins across duplicate model records")
-    void resolveNativeWebSearchSupportFromModelsList_whenDuplicateRecordsConflict_returnsFalse() throws Exception {
-        JsonNode root = JSON.readTree("""
-                {
-                  "data": [
-                    {"id": "future-model", "web_search": true},
-                    {"id": "future-model", "web_search": false}
-                  ]
-                }
-                """);
-
-        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromModelsList(root, "future-model"))
-                .contains(false);
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    @DisplayName("The real catalog fallback honors negative native-search evidence regardless of duplicate-record ordering")
+    void nativeWebSearchOutcome_duplicateRecordsConflict_returnsUnsupported(boolean positiveFirst) throws Exception {
+        HttpServer server = createOpenAiModelServer("future-model", 404, "{}", """
+                {"data":[
+                    {"id":"future-model","web_search":%s},
+                    {"id":"future-model","web_search":%s}
+                ]}
+                """.formatted(positiveFirst, !positiveFirst));
+        try {
+            String endpoint = endpoint(server);
+            assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                    "OpenAI", "future-model", endpoint, endpoint, TEST_API_KEY
+            )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -2103,21 +2198,18 @@ class ProviderCapabilityResolverTest {
                 "secret"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "Together",
                 visionAndToolsModel,
                 baseUrl,
                 "secret"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatAndModels(),
                 "Together",
                 visionAndToolsModel,
                 baseUrl,
                 "secret"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
                 "Together",
                 "Qwen/Qwen3.7-Max",
                 baseUrl,
@@ -2137,12 +2229,10 @@ class ProviderCapabilityResolverTest {
                 "https://proxy.example/v1"
         )).isFalse();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                broadCapabilities,
                 "Together",
                 "Qwen/Qwen3.5-9B"
         )).isFalse();
         assertThat(ProviderCapabilityResolver.supportsToolInvocation(
-                broadCapabilities,
                 "Together",
                 "qwen/qwen3.5-9b",
                 TOGETHER_BASE_URL

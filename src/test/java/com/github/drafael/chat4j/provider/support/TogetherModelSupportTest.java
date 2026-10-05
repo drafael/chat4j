@@ -137,7 +137,7 @@ class TogetherModelSupportTest {
             "Qwen/Qwen3.6-Plus, off medium",
             "Qwen/Qwen3.5-9B, off medium",
             "deepcogito/cogito-v2-1-671b, off medium",
-            "moonshotai/Kimi-K3, low high max",
+            "moonshotai/Kimi-K3, off low high max",
             "openai/gpt-oss-120b, low medium high",
             "openai/gpt-oss-20b, low medium high",
             "deepseek-ai/DeepSeek-V4-Pro, off high max",
@@ -159,6 +159,15 @@ class TogetherModelSupportTest {
     }
 
     @Test
+    @DisplayName("Together Kimi K3 falls back to its maximum default without overriding a supported selection")
+    void reasoningOptions_kimiK3_usesRouteDefault() {
+        var subject = TogetherModelSupport.reasoningOptions(HOSTED_BASE_URL, "moonshotai/Kimi-K3");
+        assertThat(subject.select(ReasoningLevel.MEDIUM)).isEqualTo(ReasoningLevel.MAX);
+        assertThat(subject.select(ReasoningLevel.OFF)).isEqualTo(ReasoningLevel.OFF);
+        assertThat(subject.select(ReasoningLevel.LOW)).isEqualTo(ReasoningLevel.LOW);
+    }
+
+    @Test
     @DisplayName("Together reasoning requests map Chat4J levels to documented wire values")
     void reasoningRequest_whenLevelVaries_usesLossyDocumentedMapping() {
         assertThat(TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, "MiniMaxAI/MiniMax-M3", ReasoningLevel.OFF))
@@ -166,7 +175,7 @@ class TogetherModelSupportTest {
         assertThat(TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, "MiniMaxAI/MiniMax-M3", ReasoningLevel.EXTRA_HIGH))
                 .isEqualTo(new TogetherModelSupport.ReasoningRequest(true, true, null, false));
         assertThat(TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, "moonshotai/Kimi-K3", ReasoningLevel.OFF))
-                .isEqualTo(new TogetherModelSupport.ReasoningRequest(false, false, "low", false));
+                .isEqualTo(new TogetherModelSupport.ReasoningRequest(true, false, null, false));
         assertThat(TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, "moonshotai/Kimi-K3", ReasoningLevel.LOW).effort())
                 .isEqualTo("low");
         assertThat(TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, "moonshotai/Kimi-K3", ReasoningLevel.MEDIUM).effort())
