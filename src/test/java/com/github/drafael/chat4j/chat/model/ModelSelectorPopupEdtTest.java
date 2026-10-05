@@ -141,56 +141,72 @@ class ModelSelectorPopupEdtTest {
     void showCentered_whenPreparedListIsReopened_refreshesRetainedRowCapabilities() throws Exception {
         assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for model selector behavior.");
 
-        var provider = new ProviderDef(
-                "Custom",
-                "CUSTOM_API_KEY",
-                "http://localhost",
-                "https://default.invalid",
-                List.of("embedding-test"),
-                ProviderCapabilities.chatModelsAndImages(),
-                model -> null,
-                List::of
-        );
-        ProviderRegistry providerRegistry = mock(ProviderRegistry.class);
-        when(providerRegistry.availableProviders()).thenReturn(List.of(provider));
-        CredentialResolver credentialResolver = mock(CredentialResolver.class);
-        var credentialResolutions = new AtomicInteger();
-        var firstRefreshStarted = new CountDownLatch(1);
-        var secondRefreshStarted = new CountDownLatch(1);
         var firstRefreshThread = new AtomicReference<Thread>();
         var secondRefreshThread = new AtomicReference<Thread>();
-        when(credentialResolver.resolveApiKey(provider.envVar(), null)).thenAnswer(invocation -> {
-            int resolution = credentialResolutions.incrementAndGet();
-            if (resolution == 1) {
-                firstRefreshThread.set(Thread.currentThread());
-                firstRefreshStarted.countDown();
-            } else if (resolution == 2) {
-                secondRefreshThread.set(Thread.currentThread());
-                secondRefreshStarted.countDown();
-            }
-            return "test-key";
-        });
-        var modelCacheService = new ProviderModelCacheService(
-                new ProviderModelCache(StoragePaths.ofConfigHome(tempDir))
-        );
-        modelCacheService.synchronizeScope(
-                provider.name(),
-                provider.baseUrl(),
-                modelCacheService.nextScopeVersion()
-        );
-        ProviderModelCacheService.RefreshAttempt refreshAttempt = modelCacheService.tryBeginRefreshIfNeeded(
-                provider.name(),
-                provider.baseUrl(),
-                Duration.ZERO
-        ).orElseThrow();
-        assertThat(modelCacheService.update(refreshAttempt, provider.seedModels())).isTrue();
         var owner = new AtomicReference<JDialog>();
-        var popup = new AtomicReference<ModelSelectorPopup>();
+        var subject = new AtomicReference<ModelSelectorPopup>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 
         try {
+            var metadataRequests = new AtomicInteger();
+            server.createContext("/models/embedding-test", exchange -> {
+                metadataRequests.incrementAndGet();
+                try {
+                    byte[] response = """
+                            {"id":"embedding-test","supportsReasoning":false}
+                            """.getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(200, response.length);
+                    exchange.getResponseBody().write(response);
+                } finally {
+                    exchange.close();
+                }
+            });
+            server.start();
+            var provider = new ProviderDef(
+                    "Custom",
+                    "CUSTOM_API_KEY",
+                    "http://127.0.0.1:%d".formatted(server.getAddress().getPort()),
+                    "https://default.invalid",
+                    List.of("embedding-test"),
+                    ProviderCapabilities.chatModelsAndImages(),
+                    model -> null,
+                    List::of
+            );
+            ProviderRegistry providerRegistry = mock(ProviderRegistry.class);
+            when(providerRegistry.availableProviders()).thenReturn(List.of(provider));
+            CredentialResolver credentialResolver = mock(CredentialResolver.class);
+            var credentialResolutions = new AtomicInteger();
+            var firstRefreshStarted = new CountDownLatch(1);
+            var secondRefreshStarted = new CountDownLatch(1);
+            when(credentialResolver.resolveApiKey(provider.envVar(), null)).thenAnswer(invocation -> {
+                int resolution = credentialResolutions.incrementAndGet();
+                if (resolution == 1) {
+                    firstRefreshThread.set(Thread.currentThread());
+                    firstRefreshStarted.countDown();
+                } else if (resolution == 2) {
+                    secondRefreshThread.set(Thread.currentThread());
+                    secondRefreshStarted.countDown();
+                }
+                return "test-key";
+            });
+            var modelCacheService = new ProviderModelCacheService(
+                    new ProviderModelCache(StoragePaths.ofConfigHome(tempDir))
+            );
+            modelCacheService.synchronizeScope(
+                    provider.name(),
+                    provider.baseUrl(),
+                    modelCacheService.nextScopeVersion()
+            );
+            ProviderModelCacheService.RefreshAttempt refreshAttempt = modelCacheService.tryBeginRefreshIfNeeded(
+                    provider.name(),
+                    provider.baseUrl(),
+                    Duration.ZERO
+            ).orElseThrow();
+            assertThat(modelCacheService.update(refreshAttempt, provider.seedModels())).isTrue();
             runOnEdt(() -> {
                 owner.set(new JDialog());
-                popup.set(new ModelSelectorPopup(
+                subject.set(new ModelSelectorPopup(
                         owner.get(),
                         modelCacheService,
                         ModelFavoritesService.createInMemory(),
@@ -204,30 +220,43 @@ class ModelSelectorPopupEdtTest {
                         },
                         credentialResolver
                 ));
-                popup.get().preload();
+                subject.get().preload();
             });
             assertThat(firstRefreshStarted.await(3, TimeUnit.SECONDS)).isTrue();
             firstRefreshThread.get().join(TimeUnit.SECONDS.toMillis(3));
             assertThat(firstRefreshThread.get().isAlive()).isFalse();
+            assertThat(metadataRequests.get()).isEqualTo(1);
             runOnEdt(() -> {
             });
 
-            runOnEdt(() -> popup.get().showCentered(null, null));
+            runOnEdt(() -> subject.get().showCentered(null, null));
 
             assertThat(secondRefreshStarted.await(3, TimeUnit.SECONDS)).isTrue();
             secondRefreshThread.get().join(TimeUnit.SECONDS.toMillis(3));
             assertThat(secondRefreshThread.get().isAlive()).isFalse();
+            assertThat(credentialResolutions.get()).isEqualTo(2);
         } finally {
-            runOnEdt(() -> {
-                if (popup.get() != null) {
-                    popup.get().dispose();
+            try {
+                runOnEdt(() -> {
+                    if (subject.get() != null) {
+                        subject.get().dispose();
+                    }
+                    if (owner.get() != null) {
+                        owner.get().dispose();
+                    }
+                });
+                for (AtomicReference<Thread> reference : List.of(firstRefreshThread, secondRefreshThread)) {
+                    Thread thread = reference.get();
+                    if (thread != null) {
+                        thread.join(TimeUnit.SECONDS.toMillis(3));
+                        assertThat(thread.isAlive()).isFalse();
+                    }
                 }
-                if (owner.get() != null) {
-                    owner.get().dispose();
-                }
-            });
-            runOnEdt(() -> {
-            });
+                runOnEdt(() -> {
+                });
+            } finally {
+                server.stop(0);
+            }
         }
     }
 
