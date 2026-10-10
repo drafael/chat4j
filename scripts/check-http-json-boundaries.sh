@@ -43,6 +43,7 @@ check_import "ObjectMapper" "com.fasterxml.jackson.databind.ObjectMapper" \
 
 check_import "JsonNode" "com.fasterxml.jackson.databind.JsonNode" \
   src/main/java/com/github/drafael/chat4j/persistence/conversation/ConversationMessageJsonCodec.java \
+  src/main/java/com/github/drafael/chat4j/provider/capability/models/impl/ProviderModelInfoParser.java \
   src/main/java/com/github/drafael/chat4j/provider/support/ProviderCapabilityJsonParser.java \
   src/main/java/com/github/drafael/chat4j/settings/McpJsonImporter.java
 
