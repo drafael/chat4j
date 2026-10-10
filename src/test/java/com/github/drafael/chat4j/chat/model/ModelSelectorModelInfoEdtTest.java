@@ -294,13 +294,20 @@ class ModelSelectorModelInfoEdtTest {
         ModelInfoPopup card = callOnEdt(() -> {
             ModelInfoPopup popup = field(subject, "modelInfoPopup");
             assertThat(popup.isVisible()).isTrue();
-            JScrollPane scroll = (JScrollPane) popup.getContentPane();
-            assertThat(scroll.getVerticalScrollBar().isVisible()).isTrue();
-            assertThat(popup.getMousePosition(true)).isNull();
             Timer hideTimer = field(subject, "modelInfoHideTimer");
             assertThat(hideTimer.getInitialDelay()).isEqualTo(200);
             // Fire dismissal explicitly rather than depending on wall-clock scheduling.
             hideTimer.setInitialDelay(Integer.MAX_VALUE);
+            // A full-height card can cover the stationary cursor on a small CI display.
+            Rectangle screen = popup.getGraphicsConfiguration().getBounds();
+            Point pointer = MouseInfo.getPointerInfo().getLocation();
+            popup.setSize(popup.getWidth(), Math.min(popup.getHeight(), screen.height / 3));
+            int y = pointer.y < screen.getCenterY() ? screen.y + screen.height - popup.getHeight() : screen.y;
+            popup.setLocation(popup.getX(), y);
+            popup.validate();
+            JScrollPane scroll = (JScrollPane) popup.getContentPane();
+            assertThat(scroll.getVerticalScrollBar().isVisible()).isTrue();
+            assertThat(popup.getMousePosition(true)).isNull();
             ModelRowComponent row = field(subject, "modelInfoRow");
             assertThat(row.panel().getMousePosition(true)).isNull();
             row.panel().dispatchEvent(new MouseEvent(row.panel(), MouseEvent.MOUSE_EXITED,
