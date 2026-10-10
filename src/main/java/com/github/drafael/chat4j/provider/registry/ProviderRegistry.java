@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.provider.api.ModelFetcher;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDiagnosticSanitizer;
 import com.github.drafael.chat4j.provider.api.ProviderFactory;
+import com.github.drafael.chat4j.provider.api.ProviderModelInfo;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
@@ -119,6 +120,11 @@ public class ProviderRegistry {
                 .filter(runtimePolicy::hasRequiredCredentials)
                 .map(this::toEffectiveProvider)
                 .toList();
+    }
+
+    /** Blocking, optional catalog metadata lookup; callers must run it off the EDT. */
+    public Map<String, ProviderModelInfo> fetchModelInfos(@NonNull ProviderDef provider) throws Exception {
+        return catalog.fetchModelInfos(provider.name(), provider.envVar(), provider.baseUrl());
     }
 
     public Optional<List<String>> cachedModelSupportedEndpoints(ProviderDef provider, String modelId) {

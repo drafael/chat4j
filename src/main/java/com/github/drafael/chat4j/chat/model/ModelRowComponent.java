@@ -11,6 +11,7 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.net.URL;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,6 +24,9 @@ final class ModelRowComponent {
         void onToggleFavorite(String providerName, String modelId);
 
         void onMouseEnter(String providerName, String modelId);
+
+        default void onMouseExit(String providerName, String modelId) {
+        }
     }
 
     private static final int CHECK_COLUMN_WIDTH = 18;
@@ -83,7 +87,7 @@ final class ModelRowComponent {
         wireFavoriteLabel(listener);
         applyDisabledState();
         wireRow(listener);
-        assemble();
+        assemble(listener);
         updateModelLabelText();
     }
 
@@ -266,15 +270,6 @@ final class ModelRowComponent {
     private void wireRow(Listener listener) {
         MouseAdapter rowMouseListener = new MouseAdapter() {
             @Override
-            public void mouseEntered(MouseEvent e) {
-                if (!selectable) {
-                    return;
-                }
-
-                listener.onMouseEnter(providerName, modelId);
-            }
-
-            @Override
             public void mousePressed(MouseEvent e) {
                 if (!selectable || !SwingUtilities.isLeftMouseButton(e)) {
                     return;
@@ -284,15 +279,35 @@ final class ModelRowComponent {
             }
         };
 
-        panel.addMouseListener(rowMouseListener);
-        nameLabel.addMouseListener(rowMouseListener);
-        checkLabel.addMouseListener(rowMouseListener);
-        imageCapabilityLabel.addMouseListener(rowMouseListener);
-        reasoningCapabilityLabel.addMouseListener(rowMouseListener);
-        webCapabilityLabel.addMouseListener(rowMouseListener);
+        List.of(panel, nameLabel, checkLabel, imageCapabilityLabel, reasoningCapabilityLabel, webCapabilityLabel)
+                .forEach(component -> {
+                    component.addMouseListener(rowMouseListener);
+                    wireHover(component, listener);
+                });
+        wireHover(favoriteLabel, listener);
     }
 
-    private void assemble() {
+    private void wireHover(Component component, Listener listener) {
+        component.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                if (selectable) {
+                    listener.onMouseEnter(providerName, modelId);
+                }
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                SwingUtilities.invokeLater(() -> {
+                    if (panel.isShowing() && panel.getMousePosition(true) == null) {
+                        listener.onMouseExit(providerName, modelId);
+                    }
+                });
+            }
+        });
+    }
+
+    private void assemble(Listener listener) {
         JPanel actions = new JPanel();
         actions.setOpaque(false);
         actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
@@ -301,6 +316,7 @@ final class ModelRowComponent {
         actions.add(imageCapabilityLabel);
         actions.add(reasoningCapabilityLabel);
         actions.add(webCapabilityLabel);
+        wireHover(actions, listener);
 
         panel.add(nameLabel, BorderLayout.CENTER);
         panel.add(actions, BorderLayout.EAST);

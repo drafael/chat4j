@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
+import com.github.drafael.chat4j.provider.api.ProviderModelInfo;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
@@ -18,8 +19,10 @@ import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.models.Model;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.net.URI;
@@ -28,6 +31,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -36,6 +40,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 
 @Slf4j
 public class OpenAiModelCatalogClient implements ModelCatalogClient {
@@ -116,6 +121,55 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             }
         }
         return fallbackModels(runtime);
+    }
+
+    @Override
+    public Map<String, ProviderModelInfo> fetchModelInfos(@NonNull ProviderRuntime runtime) throws Exception {
+        if (Thread.currentThread().isInterrupted() || "OpenAI Codex".equals(runtime.descriptor().name())) {
+            return emptyMap();
+        }
+        String provider = runtime.descriptor().name();
+        String apiKey = runtime.apiKey();
+        boolean copilot = isCopilotProvider(runtime);
+        if (copilot && looksLikeGitHubOAuthToken(apiKey)) {
+            apiKey = exchangeCopilotTokenCached(apiKey);
+            if (Thread.currentThread().isInterrupted()) {
+                return emptyMap();
+            }
+            if (StringUtils.isBlank(apiKey)) {
+                throw new IllegalStateException("Copilot model information authentication unavailable");
+            }
+        }
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Accept", "application/json");
+        if (StringUtils.isNotBlank(apiKey)) {
+            headers.put(
+                    "Google AI".equals(provider) ? "x-goog-api-key" : "Authorization",
+                    "Google AI".equals(provider) ? apiKey : "Bearer %s".formatted(apiKey)
+            );
+        }
+        if (copilot) {
+            headers.putAll(CopilotRequestHeaders.asMap());
+        }
+        String base = runtime.baseUrl().replaceAll("/+$", "");
+        String endpoint = switch (provider) {
+            case "Google AI" -> modelsEndpoint(Strings.CS.removeEnd(base, "/openai"));
+            case "LM Studio" -> "%s/api/v1/models".formatted(Strings.CS.removeEnd(base, "/v1"));
+            default -> modelsEndpoint(base);
+        };
+        var request = new HttpExchangeRequest(
+                "GET",
+                URI.create(endpoint),
+                headers,
+                HttpBody.empty(),
+                Duration.ofSeconds(4),
+                0
+        );
+        HttpExchangeResponse response = transport.send(request, Thread.currentThread()::isInterrupted);
+        if (!response.successful()) {
+            throw new IllegalStateException("Model information request failed with HTTP %d".formatted(response.statusCode()));
+        }
+        return ProviderModelInfoParser.parse(provider, response.body());
     }
 
     private List<String> fallbackModels(ProviderRuntime runtime) {

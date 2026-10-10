@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ModelFetcher;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderFactory;
+import com.github.drafael.chat4j.provider.api.ProviderModelInfo;
 import com.github.drafael.chat4j.provider.capability.auth.impl.EnvVarCredentialStrategy;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
@@ -194,6 +195,16 @@ final class ProviderCatalog {
 
     Optional<List<String>> cachedCopilotSupportedEndpoints(String baseUrl, String modelId) {
         return copilotModelMetadataStore.supportedEndpointsEvidence(baseUrl, modelId);
+    }
+
+    Map<String, ProviderModelInfo> fetchModelInfos(String providerName, String envVar, String baseUrl) throws Exception {
+        ProviderDefinition definition = findRequiredProvider(providerName);
+        ProviderRuntime runtime = resolveRuntime(definition, envVar, baseUrl, null);
+        try {
+            return definition.module().modelCatalogClient().fetchModelInfos(runtime);
+        } catch (Exception e) {
+            throw ProviderExceptionMapper.map(e, runtime.apiKey());
+        }
     }
 
     ModelFetcher createFetcher(String providerName, String envVar, String baseUrl) {

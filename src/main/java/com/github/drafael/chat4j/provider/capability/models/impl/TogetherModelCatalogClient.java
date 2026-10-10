@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.json.JsonCodec;
+import com.github.drafael.chat4j.provider.api.ProviderModelInfo;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
@@ -24,6 +25,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 
 @Slf4j
 public class TogetherModelCatalogClient implements ModelCatalogClient {
@@ -84,6 +86,26 @@ public class TogetherModelCatalogClient implements ModelCatalogClient {
             log.debug("Together model listing failed: {}", diagnostic);
             return emptyList();
         }
+    }
+
+    @Override
+    public Map<String, ProviderModelInfo> fetchModelInfos(@NonNull ProviderRuntime runtime) throws Exception {
+        if (Thread.currentThread().isInterrupted() || StringUtils.isBlank(runtime.apiKey())) {
+            return emptyMap();
+        }
+        var request = new HttpExchangeRequest(
+                "GET",
+                URI.create(modelsEndpoint(runtime.baseUrl())),
+                Map.of("Authorization", "Bearer %s".formatted(runtime.apiKey()), "Accept", "application/json"),
+                HttpBody.empty(),
+                REQUEST_TIMEOUT,
+                0
+        );
+        HttpExchangeResponse response = transport.send(request, Thread.currentThread()::isInterrupted);
+        if (!response.successful()) {
+            throw new IllegalStateException("Model information request failed with HTTP %d".formatted(response.statusCode()));
+        }
+        return ProviderModelInfoParser.parse("Together", response.body());
     }
 
     private static boolean validChatEntry(Model model) {

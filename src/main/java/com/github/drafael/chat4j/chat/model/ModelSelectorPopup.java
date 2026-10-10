@@ -5,6 +5,7 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.provider.api.ProviderModelInfo;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderDef;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
@@ -25,6 +26,7 @@ import java.awt.event.WindowEvent;
 import java.net.URL;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -127,6 +129,13 @@ public class ModelSelectorPopup extends JDialog {
     private int highlightedIndex = -1;
     private ModelRowComponent highlightedRow;
     private boolean visibleListRebuildQueued;
+    private final Map<String, Map<String, ProviderModelInfo>> modelInfoCache = new LinkedHashMap<>();
+    private final Map<String, Thread> modelInfoThreads = new LinkedHashMap<>();
+    private final Set<String> modelInfoFailures = new HashSet<>();
+    private final Timer modelInfoTimer;
+    private final Timer modelInfoHideTimer;
+    private ModelRowComponent modelInfoRow;
+    private ModelInfoPopup modelInfoPopup;
 
     private enum ViewMode {
         ALL,
@@ -206,6 +215,11 @@ public class ModelSelectorPopup extends JDialog {
         groupToggles(allToggle, favoritesToggle);
         this.listPanel = buildListPanel();
         this.scrollPane = new JScrollPane(listPanel);
+        this.modelInfoTimer = new Timer(350, e -> loadModelInfo());
+        modelInfoTimer.setRepeats(false);
+        this.modelInfoHideTimer = new Timer(200, e -> hideModelInfoIfPointerOutside());
+        modelInfoHideTimer.setRepeats(false);
+        scrollPane.getViewport().addChangeListener(e -> hideModelInfo());
 
         setContentPane(buildContent(searchField, allToggle, favoritesToggle, scrollPane));
 
@@ -236,6 +250,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void preparePopup() {
+        modelInfoFailures.clear();
         boolean refreshPreparedList = preloaded;
         boolean refreshLocalModels = refreshPreparedList && entries.containsKey(CODEX_PROVIDER_NAME);
         ensureListBuilt();
@@ -347,11 +362,17 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     public void hidePopup() {
+        hideModelInfo();
+        cancelModelInfoRequests();
         setVisible(false);
         uninstallOutsideClickListener();
     }
 
     public void invalidateModelList() {
+        hideModelInfo();
+        cancelModelInfoRequests();
+        modelInfoCache.clear();
+        modelInfoFailures.clear();
         synchronized (capabilityRefreshLock) {
             providerLoadCounter.incrementAndGet();
             capabilityCache.clear();
@@ -386,6 +407,9 @@ public class ModelSelectorPopup extends JDialog {
         codexModelsChangedPending.set(false);
         invalidateModelList();
         uninstallOutsideClickListener();
+        if (modelInfoPopup != null) {
+            modelInfoPopup.dispose();
+        }
         super.dispose();
     }
 
@@ -559,6 +583,7 @@ public class ModelSelectorPopup extends JDialog {
         if (highlightedRow != null) {
             highlightedRow.setHighlighted(true);
         }
+        scheduleModelInfo(highlightedRow);
     }
 
     private void moveHighlightTo(int index) {
@@ -569,6 +594,7 @@ public class ModelSelectorPopup extends JDialog {
 
         setHighlightedIndex(Math.max(0, Math.min(visible.size() - 1, index)), visible);
         scrollToHighlighted(visible);
+        scheduleModelInfo(highlightedRow);
     }
 
     private void moveHighlight(int direction) {
@@ -586,6 +612,7 @@ public class ModelSelectorPopup extends JDialog {
 
         setHighlightedIndex(newIndex, visible);
         scrollToHighlighted(visible);
+        scheduleModelInfo(highlightedRow);
     }
 
     private int pageStep() {
@@ -663,7 +690,19 @@ public class ModelSelectorPopup extends JDialog {
                 return;
             }
 
-            if (!(event instanceof MouseEvent mouseEvent) || mouseEvent.getID() != MouseEvent.MOUSE_PRESSED) {
+            if (!(event instanceof MouseEvent mouseEvent)) {
+                return;
+            }
+            if (modelInfoPopup != null && modelInfoPopup.isVisible()
+                    && mouseEvent.getSource() instanceof Component component
+                    && SwingUtilities.isDescendingFrom(component, modelInfoPopup)) {
+                if (mouseEvent.getID() == MouseEvent.MOUSE_ENTERED) {
+                    modelInfoHideTimer.stop();
+                } else if (mouseEvent.getID() == MouseEvent.MOUSE_EXITED) {
+                    modelInfoHideTimer.restart();
+                }
+            }
+            if (mouseEvent.getID() != MouseEvent.MOUSE_PRESSED) {
                 return;
             }
 
@@ -673,7 +712,8 @@ public class ModelSelectorPopup extends JDialog {
                 return;
             }
 
-            if (SwingUtilities.isDescendingFrom(sourceComponent, this)) {
+            if (SwingUtilities.isDescendingFrom(sourceComponent, this)
+                    || (modelInfoPopup != null && SwingUtilities.isDescendingFrom(sourceComponent, modelInfoPopup))) {
                 return;
             }
 
@@ -895,6 +935,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void showProviderState(String message) {
+        hideModelInfo();
         listPanel.removeAll();
         groups.clear();
         visibleRowsByKey.clear();
@@ -920,6 +961,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void rebuildVisibleList() {
+        hideModelInfo();
         listPanel.removeAll();
         groups.clear();
         visibleRowsByKey.clear();
@@ -1206,7 +1248,20 @@ public class ModelSelectorPopup extends JDialog {
                             ModelRowComponent row = visible.get(i);
                             if (row.providerName().equals(p) && row.modelId().equals(m)) {
                                 setHighlightedIndex(i, visible);
+                                scheduleModelInfo(row);
                                 return;
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void onMouseExit(String p, String m) {
+                        if (modelInfoRow != null && modelInfoRow.providerName().equals(p)
+                                && modelInfoRow.modelId().equals(m)) {
+                            if (modelInfoPopup != null && modelInfoPopup.isVisible()) {
+                                modelInfoHideTimer.restart();
+                            } else {
+                                hideModelInfo();
                             }
                         }
                     }
@@ -1371,6 +1426,101 @@ public class ModelSelectorPopup extends JDialog {
     }
 
 
+    private void scheduleModelInfo(ModelRowComponent row) {
+        modelInfoHideTimer.stop();
+        if (row == modelInfoRow) {
+            return;
+        }
+        hideModelInfo();
+        if (row != null && isVisible() && !disposed) {
+            modelInfoRow = row;
+            modelInfoTimer.restart();
+        }
+    }
+
+    private void hideModelInfoIfPointerOutside() {
+        boolean overRow = modelInfoRow != null && modelInfoRow.panel().getMousePosition(true) != null;
+        boolean overCard = modelInfoPopup != null && modelInfoPopup.getMousePosition(true) != null;
+        if (!overRow && !overCard) {
+            hideModelInfo();
+        }
+    }
+
+    private void hideModelInfo() {
+        modelInfoHideTimer.stop();
+        modelInfoTimer.stop();
+        modelInfoRow = null;
+        if (modelInfoPopup != null) {
+            modelInfoPopup.setVisible(false);
+        }
+    }
+
+    private void cancelModelInfoRequests() {
+        modelInfoThreads.values().forEach(Thread::interrupt);
+        modelInfoThreads.clear();
+    }
+
+    private void loadModelInfo() {
+        if (modelInfoRow == null || !isVisible() || disposed) {
+            return;
+        }
+        String providerName = modelInfoRow.providerName();
+        if (modelInfoCache.containsKey(providerName)) {
+            showCachedModelInfo();
+            return;
+        }
+        ProviderEntry entry = entries.get(providerName);
+        if (entry == null || modelInfoThreads.containsKey(providerName) || modelInfoFailures.contains(providerName)) {
+            return;
+        }
+        long scope = providerLoadCounter.get();
+        Thread worker = Thread.ofVirtual().name("chat4j-model-info").unstarted(() -> {
+            Map<String, ProviderModelInfo> infos;
+            try {
+                infos = providerRegistry.fetchModelInfos(entry.def);
+            } catch (Exception e) {
+                log.debug("Model information unavailable for {}", providerName);
+                infos = null;
+            }
+            Map<String, ProviderModelInfo> result = infos;
+            Thread completedWorker = Thread.currentThread();
+            SwingUtilities.invokeLater(() -> {
+                if (disposed || scope != providerLoadCounter.get()
+                        || modelInfoThreads.get(providerName) != completedWorker) {
+                    return;
+                }
+                modelInfoThreads.remove(providerName);
+                if (result == null) {
+                    modelInfoFailures.add(providerName);
+                } else {
+                    modelInfoCache.put(providerName, Map.copyOf(result));
+                    showCachedModelInfo();
+                }
+            });
+        });
+        modelInfoThreads.put(providerName, worker);
+        worker.start();
+    }
+
+    private void showCachedModelInfo() {
+        if (modelInfoRow == null || modelInfoTimer.isRunning() || !isVisible() || disposed
+                || !modelInfoRow.panel().isShowing()) {
+            return;
+        }
+        Map<String, ProviderModelInfo> infos = modelInfoCache.get(modelInfoRow.providerName());
+        ProviderModelInfo info = infos == null ? null : infos.get(modelInfoRow.modelId());
+        if (info == null || !info.hasDetails()) {
+            return;
+        }
+        if (modelInfoPopup == null) {
+            modelInfoPopup = new ModelInfoPopup(this);
+        }
+        JPanel row = modelInfoRow.panel();
+        Rectangle rowBounds = new Rectangle(row.getLocationOnScreen(), row.getSize());
+        int iconSize = Math.max(10, getFontMetrics(UIManager.getFont("Label.font")).getHeight() - 1);
+        modelInfoPopup.showInfo(info, providerIcon(modelInfoRow.providerName(), iconSize), getBounds(), rowBounds);
+    }
+
     private void toggleFavorite(String providerName, String modelId) {
         try {
             modelFavoritesService.toggleFavorite(providerName, modelId);
@@ -1397,6 +1547,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void filterModels() {
+        hideModelInfo();
         resetHighlight();
         String query = searchField.getText().trim().toLowerCase(Locale.ROOT);
 
