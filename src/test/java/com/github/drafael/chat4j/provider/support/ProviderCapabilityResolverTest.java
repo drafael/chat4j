@@ -2138,18 +2138,19 @@ class ProviderCapabilityResolverTest {
         )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
     }
 
-    @Test
-    @DisplayName("DeepSeek native search requires its official endpoint")
-    void nativeWebSearchOutcome_whenDeepSeekEndpointIsOfficial_returnsOptional() {
+    @ParameterizedTest
+    @ValueSource(strings = {"deepseek-flash", "deepseek-flash[1m]", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-pro[1m]"})
+    @DisplayName("DeepSeek native search requires its official endpoint for current and legacy model identifiers")
+    void nativeWebSearchOutcome_whenDeepSeekEndpointIsOfficial_returnsOptional(String modelId) {
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "DeepSeek",
-                "deepseek-v4-pro",
+                modelId,
                 "https://api.deepseek.com/v1",
                 "https://api.deepseek.com/v1"
         )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "DeepSeek",
-                "deepseek-v4-pro",
+                modelId,
                 "https://proxy.example/v1",
                 "https://api.deepseek.com/v1"
         )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);

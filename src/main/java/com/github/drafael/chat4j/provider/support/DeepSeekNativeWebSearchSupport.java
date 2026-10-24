@@ -15,6 +15,8 @@ public final class DeepSeekNativeWebSearchSupport {
     public static final String ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
 
     private static final Set<String> SUPPORTED_MODELS = Set.of(
+            "deepseek-flash",
+            "deepseek-flash[1m]",
             "deepseek-v4-flash",
             "deepseek-v4-pro",
             "deepseek-v4-pro[1m]"
