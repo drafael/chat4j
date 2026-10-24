@@ -27,8 +27,8 @@ class ModelSelectorPopupRefreshPolicyTest {
     private Path tempDir;
 
     @Test
-    @DisplayName("Perplexity popup models ignore stale cache and use static Sonar list")
-    void initialModels_whenProviderIsPerplexity_returnsStaticSonarModels() {
+    @DisplayName("Perplexity popup choices ignore stale Sonar caches and use Agent API research efforts")
+    void initialModels_whenProviderIsPerplexity_returnsResearchEfforts() {
         List<String> models = ModelSelectorPopup.initialModels(
                 "Perplexity",
                 List.of("sonar-pro", "sonar"),
@@ -37,10 +37,7 @@ class ModelSelectorPopupRefreshPolicyTest {
         );
 
         assertThat(models).containsExactly(
-                "sonar",
-                "sonar-pro",
-                "sonar-reasoning-pro",
-                "sonar-deep-research"
+                "fast", "low", "medium", "high"
         );
     }
 

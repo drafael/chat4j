@@ -40,7 +40,7 @@ class ProviderCatalogTest {
     private Path tempDir;
 
     @Test
-    @DisplayName("Provider catalog uses dynamic model loading except static Perplexity seed models")
+    @DisplayName("Provider catalog uses dynamic model loading except static Perplexity research efforts")
     void allProviders_whenCatalogInitialized_returnsProvidersWithoutSeedModels() {
         var subject = newCatalog();
 
@@ -51,10 +51,7 @@ class ProviderCatalogTest {
                 .filteredOn(providerDefinition -> "Perplexity".equals(providerDefinition.name()))
                 .singleElement()
                 .satisfies(providerDefinition -> assertThat(providerDefinition.seedModels()).containsExactly(
-                        "sonar",
-                        "sonar-pro",
-                        "sonar-reasoning-pro",
-                        "sonar-deep-research"
+                        "fast", "low", "medium", "high"
                 ));
     }
 

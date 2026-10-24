@@ -51,6 +51,11 @@ public class ModelFavoritesService {
             String key = ModelFavoriteKeyCodec.toFavoriteKey(modelRef);
             if (favorite) {
                 settingsRepo.put(key, "true");
+            } else if ("perplexity".equals(modelRef.providerName())) {
+                // Several legacy Sonar favorites can now represent the same research effort.
+                settingsRepo.findByPrefix(ModelFavoriteKeyCodec.FAVORITE_KEY_PREFIX).keySet().stream()
+                        .filter(existingKey -> modelRef.equals(ModelFavoriteKeyCodec.parseFavoriteKey(existingKey)))
+                        .forEach(settingsRepo::remove);
             } else {
                 settingsRepo.remove(key);
             }

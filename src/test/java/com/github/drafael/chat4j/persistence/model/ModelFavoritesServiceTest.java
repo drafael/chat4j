@@ -28,6 +28,33 @@ class ModelFavoritesServiceTest {
     }
 
     @Test
+    @DisplayName("Legacy Perplexity favorites remain visible and can be unfavorited without returning after restart")
+    void primeFromSettings_legacySonarFavorites_mapsEffortsAndRemovesAllAliases() {
+        var settingsRepo = new InMemorySettingsRepo();
+        settingsRepo.put("chat4j.models.favorite.perplexity::sonar", "true");
+        settingsRepo.put("chat4j.models.favorite.perplexity::sonar-pro", "true");
+        settingsRepo.put("chat4j.models.favorite.perplexity::sonar-deep-research", "true");
+        settingsRepo.put("chat4j.models.favorite.openrouter::perplexity%2Fsonar-pro", "true");
+        var subject = new ModelFavoritesService(settingsRepo);
+
+        subject.primeFromSettings();
+
+        assertThat(subject.isFavorite("Perplexity", "fast")).isTrue();
+        assertThat(subject.isFavorite("Perplexity", "high")).isTrue();
+        assertThat(subject.isFavorite("OpenRouter", "perplexity/sonar-pro")).isTrue();
+        subject.setFavorite("Perplexity", "fast", true);
+        subject.setFavorite("Perplexity", "fast", false);
+        subject.primeFromSettings();
+
+        assertThat(subject.isFavorite("Perplexity", "fast")).isFalse();
+        assertThat(subject.isFavorite("Perplexity", "high")).isTrue();
+        assertThat(subject.isFavorite("OpenRouter", "perplexity/sonar-pro")).isTrue();
+        assertThat(settingsRepo.findByPrefix(ModelFavoriteKeyCodec.FAVORITE_KEY_PREFIX).keySet())
+                .doesNotContain("chat4j.models.favorite.perplexity::sonar", "chat4j.models.favorite.perplexity::sonar-pro",
+                        "chat4j.models.favorite.perplexity::fast");
+    }
+
+    @Test
     @DisplayName("Favorite keys preserve provider slug and URL-encoded model ID format")
     void setFavorite_whenCalled_persistsBackwardCompatibleKeys() {
         var settingsRepo = new InMemorySettingsRepo();

@@ -105,8 +105,8 @@ public final class ProviderCapabilityResolver {
         if (knownOptions.isPresent()) {
             return knownOptions.get();
         }
-        if (Strings.CS.equals(providerName, "Perplexity") && PerplexityModelIds.isReasoningSonarModel(modelId)) {
-            // The native Sonar client does not send an effort or reasoning-disable parameter.
+        if (Strings.CS.equals(providerName, "Perplexity") && PerplexityModelIds.isReasoningAgentOption(modelId)) {
+            // Research effort selects the managed configuration, independently of reasoning.effort.
             return ReasoningOptions.of(List.of(ReasoningLevel.MEDIUM));
         }
         return ReasoningOptions.of(ReasoningLevel.standardLevels());
@@ -220,7 +220,7 @@ public final class ProviderCapabilityResolver {
         String model = normalize(modelId);
 
         if (containsAny(provider, PERPLEXITY_PROVIDER_HINTS)) {
-            return Optional.of(PerplexityModelIds.isReasoningSonarModel(modelId));
+            return Optional.of(PerplexityModelIds.isReasoningAgentOption(modelId));
         }
 
         Optional<Boolean> dynamicallyResolvedSupport = resolveDynamicReasoningSupport(provider, modelId, baseUrl, apiKey);
@@ -356,7 +356,7 @@ public final class ProviderCapabilityResolver {
             return NativeWebSearchOutcome.UNSUPPORTED;
         }
         if (PERPLEXITY_PROVIDER_HINTS.contains(provider)) {
-            return PerplexityModelIds.isSonarModel(modelId)
+            return PerplexityModelIds.isAgentOption(modelId)
                     ? NativeWebSearchOutcome.REQUIRED
                     : NativeWebSearchOutcome.UNSUPPORTED;
         }

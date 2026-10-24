@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.persistence.model;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeySlugs;
+import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -56,6 +57,9 @@ final class ModelFavoriteKeyCodec {
             return null;
         }
 
+        if ("perplexity".equals(normalizedProvider) && PerplexityModelIds.isAgentOption(normalizedModel)) {
+            normalizedModel = PerplexityModelIds.agentEffort(normalizedModel);
+        }
         return new ModelFavoritesService.ModelRef(normalizedProvider, normalizedModel);
     }
 
