@@ -18,7 +18,7 @@ Perplexity remains a standalone chat provider. It is not used to add search to a
 | Provider/runtime | Search behavior | Source metadata |
 | --- | --- | --- |
 | Anthropic Claude | Optional native web-search tool | Claim-linked citation deltas |
-| DeepSeek V4 on the official endpoint | Optional Anthropic-compatible native search | Structured **Sources consulted** |
+| DeepSeek Flash and V4 Pro on the official endpoint | Optional Anthropic-compatible native search | Structured **Sources consulted** |
 | Connector-capable Mistral models on the official endpoint | Optional Conversations `web_search` | Claim-linked `tool_reference` citations |
 | OpenAI Codex CLI models | Optional CLI/app-server search with explicit `live` or `disabled` mode | Opened pages under **Sources consulted** when supplied |
 | GitHub Copilot `gpt-5.4-mini` on the official endpoint with `/responses` metadata | Optional Responses `web_search` | URL citation annotations |
@@ -31,6 +31,10 @@ Perplexity remains a standalone chat provider. It is not used to add search to a
 | OpenRouter `openai/*` models on the official endpoint | Optional `openrouter:web_search` Chat Completions server tool | Claim-linked URL citation annotations when supplied |
 | OpenRouter `:online` / namespaced Sonar | Required model-semantic search | URL annotations when supplied |
 | Perplexity Sonar | Required standalone-provider search | Citations and search results |
+
+DeepSeek search-enabled requests keep the Anthropic-compatible native search route on the official endpoint. Chat4J accepts `deepseek-flash` and the documented Claude Code identifier `deepseek-flash[1m]`, alongside the previously supported `deepseek-v4-flash`, `deepseek-v4-pro`, and `deepseek-v4-pro[1m]` identifiers. The retired V4 Flash model name now routes to the current Flash model. Ordinary requests continue through Chat Completions. Chat4J does not switch search requests to Responses: DeepSeek documents Responses `web_search` as supported only by `deepseek-v4-pro` and ignored by `deepseek-flash`.
+
+DeepSeek introduced standalone `POST /v1/tools/search` and `POST /v1/tools/fetch` endpoints on October 17, 2026. These return structured search results and page Markdown, respectively; Chat4J does not call them directly or use them as a fallback. According to the [Search & Fetch billing guide](https://api-docs.deepseek.com/guides/search/#billing), each costs $0.75 per 1,000 successful requests that produce results; failed requests, empty search results, and timeouts are not billed. Existing server-side search tool calls also use these APIs. DeepSeek states that per-request billing for those calls starts at 00:00 Beijing time on November 1, 2026; search summarization can also incur additional model-token charges.
 
 Mistral search-enabled requests use the stateless Conversations API with `store:false` and the standard `web_search` tool. Ordinary Mistral chat continues through Chat Completions. Chat4J does not request `web_search_premium`, and custom Mistral endpoints do not inherit hosted Conversations search. Only the connector-capable Mistral Small, Medium, and Large families advertise Web Search. Specialized families that the hosted API rejects for built-in connectors—including Codestral, Devstral, Ministral, Leanstral, and Mistral Code—remain available for ordinary chat but do not advertise Web Search. Conversations accepts only `user` and `assistant` inputs, so leading system messages are sent through its top-level `instructions` field; a later system message is rejected rather than reordered. Mistral does not expose the search query text, so Chat4J does not invent a **Searched** entry from the user prompt. The current API accepts reasoning effort `none` or `high`; Chat4J maps disabled reasoning to `none` and enabled levels to `high` on this route.
 
@@ -54,6 +58,11 @@ Native search activity, citations, consulted sources, attachments, cancellation,
 
 - OpenAI web search: https://developers.openai.com/api/docs/guides/tools-web-search
 - Anthropic web search: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+- DeepSeek native search and Claude Code identifiers: https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code
+- DeepSeek Anthropic compatibility: https://api-docs.deepseek.com/guides/anthropic_api
+- DeepSeek Responses compatibility: https://api-docs.deepseek.com/guides/responses_api/
+- DeepSeek Search & Fetch and billing: https://api-docs.deepseek.com/guides/search/
+- DeepSeek model and API changes: https://api-docs.deepseek.com/updates/
 - Mistral web search: https://docs.mistral.ai/studio/agents/agent-tools/websearch
 - Mistral Conversations API: https://docs.mistral.ai/api/endpoint/beta/conversations
 - OpenAI Codex configuration: https://developers.openai.com/codex/config-reference

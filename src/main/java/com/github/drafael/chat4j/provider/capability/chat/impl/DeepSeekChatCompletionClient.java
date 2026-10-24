@@ -94,7 +94,7 @@ public class DeepSeekChatCompletionClient implements ChatCompletionClient {
                 runtime.baseUrl()
         )) {
             throw new IllegalArgumentException(
-                    "DeepSeek native Web Search requires a supported V4 model and the official API endpoint."
+                    "DeepSeek native Web Search requires a supported model and the official API endpoint."
             );
         }
         nativeSearchClient.streamCompletion(

@@ -38,14 +38,14 @@ class DeepSeekNativeWebSearchSupportTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"deepseek-v4-flash", "DEEPSEEK-V4-PRO", " deepseek-v4-pro[1m] "})
-    @DisplayName("Only exact documented V4 model identifiers are accepted")
+    @ValueSource(strings = {"deepseek-flash", " DEEPSEEK-FLASH[1M] ", "deepseek-v4-flash", "DEEPSEEK-V4-PRO", " deepseek-v4-pro[1m] "})
+    @DisplayName("Current Flash and previously supported V4 identifiers are accepted")
     void supportsModel_whenModelIsAllowlisted_returnsTrue(String modelId) {
         assertThat(DeepSeekNativeWebSearchSupport.supportsModel(modelId)).isTrue();
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash[1m]", "vendor/deepseek-v4-pro", "deepseek-v4-pro-extra"})
+    @ValueSource(strings = {"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash[1m]", "vendor/deepseek-v4-pro", "deepseek-v4-pro-extra", "vendor/deepseek-flash", "deepseek-flash-extra", "deepseek-flash[2m]"})
     @DisplayName("Legacy, namespaced, and unverified model identifiers are rejected")
     void supportsModel_whenModelIsNotAllowlisted_returnsFalse(String modelId) {
         assertThat(DeepSeekNativeWebSearchSupport.supportsModel(modelId)).isFalse();
