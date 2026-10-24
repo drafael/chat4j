@@ -14,17 +14,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PerplexityModelCatalogClientTest {
 
     @Test
-    @DisplayName("Perplexity model catalog returns the supported Sonar chat models")
-    void fetchModels_whenCalled_returnsStaticSonarModels() {
+    @DisplayName("Perplexity catalog returns research configurations rather than treating effort names as model IDs")
+    void fetchModels_whenCalled_returnsResearchEfforts() {
         var subject = new PerplexityModelCatalogClient();
 
         List<String> models = subject.fetchModels(runtime("http://127.0.0.1:1"));
 
         assertThat(models).containsExactly(
-                "sonar",
-                "sonar-pro",
-                "sonar-reasoning-pro",
-                "sonar-deep-research"
+                "fast", "low", "medium", "high"
         );
     }
 

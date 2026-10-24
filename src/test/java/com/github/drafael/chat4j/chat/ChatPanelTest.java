@@ -2331,6 +2331,19 @@ class ChatPanelTest {
         });
     }
 
+    @ParameterizedTest
+    @CsvSource({"sonar, fast", "sonar-pro, fast", "sonar-reasoning-pro, low", "sonar-deep-research, high"})
+    @DisplayName("Saved Perplexity conversations reopen with the equivalent research configuration before catalogs load")
+    void setSelectedModel_savedSonarSelection_preservesResearchDepth(String legacyModel, String effort) throws Exception {
+        runOnEdt(() -> {
+            setField(subject, "providerMap", emptyMap());
+
+            subject.setSelectedModel("Perplexity > %s".formatted(legacyModel));
+
+            assertThat(subject.getSelectedModel()).isEqualTo("Perplexity > %s".formatted(effort));
+        });
+    }
+
     @Test
     @DisplayName("Persisted Together selections reject unknown and wrong-case model IDs before provider models load")
     void setSelectedModel_whenTogetherModelsAreNotLoaded_rejectsUnreviewedIds() throws Exception {

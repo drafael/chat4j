@@ -1588,7 +1588,7 @@ public class ModelSelectorPopup extends JDialog {
 
     static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels, boolean invalidated) {
         if (Strings.CS.equals(providerName, "Perplexity")) {
-            return PerplexityModelIds.SONAR_MODELS;
+            return PerplexityModelIds.AGENT_EFFORTS;
         }
 
         if (invalidated) {

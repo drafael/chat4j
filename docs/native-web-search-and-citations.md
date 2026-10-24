@@ -5,13 +5,17 @@ Chat4J's Web Search control applies only to the selected provider, model, and ef
 ## Runtime behavior
 
 - **Optional search** shows a directly toggleable Web Search button.
-- **Required search** shows the button selected and locked because the selected transport has no non-searching mode. This includes standalone Perplexity Sonar, Groq Compound, OpenRouter `:online`/namespaced Sonar, and OpenAI `gpt-5-search-api` and search-preview models on their documented endpoints.
+- **Required search** shows the button selected and locked because the selected transport has no non-searching mode. This includes standalone Perplexity research efforts, Groq Compound, OpenRouter `:online`/namespaced Sonar, and OpenAI `gpt-5-search-api` and search-preview models on their documented endpoints.
 - **Unsupported or unresolved search** hides the button.
 - Agent Mode and effective Web Search are mutually exclusive.
 - A native-search failure is reported normally. Chat4J does not retry the request without search.
-- Custom endpoints do not inherit native routes from provider or model names, except standalone Perplexity Sonar because its selected transport is inherently searching.
+- Custom endpoints do not inherit native routes from provider or model names, except standalone Perplexity research because its selected configurations include search.
 
 Perplexity remains a standalone chat provider. It is not used to add search to another provider.
+
+Perplexity uses the Agent API at `/v1/agent`, with research configurations `fast`, `low`, `medium`, and `high`. These are the API's top-level `effort` values, not model IDs or `reasoning.effort` settings. Saved native Sonar selections and favorites map to equivalent configurations: `sonar` and `sonar-pro` become `fast`, `sonar-reasoning-pro` becomes `low`, and `sonar-deep-research` becomes `high`. OpenRouter Sonar IDs are unchanged.
+
+Fast requests return a buffered answer with `store:false`. Deeper research uses background submission and polling with `store:true` for retrieval and the existing 15-minute local deadline. The storage flag controls retrieval visibility; it is not a zero-retention guarantee. Chat4J continues replaying the local conversation history rather than using remote conversation IDs. Polls are paced and honor `Retry-After` on HTTP 429 without resubmitting the job; token-paused runs remain in progress. Abandoned background runs receive a best-effort server-side cancellation request. Cancellation acknowledgements are asynchronous, and failures are logged without hiding the original failure. Responses use typed `output` items; numeric and source-typed citation markers resolve by explicit result IDs before URL deduplication. SSE progress, `xhigh`, direct model selection, and extra tool/file-output controls are not exposed by this migration.
 
 ## Supported native transports
 
@@ -30,7 +34,7 @@ Perplexity remains a standalone chat provider. It is not used to add search to a
 | Groq Compound | Required model-semantic search | Search-result citation metadata when supplied |
 | OpenRouter `openai/*` models on the official endpoint | Optional `openrouter:web_search` Chat Completions server tool | Claim-linked URL citation annotations when supplied |
 | OpenRouter `:online` / namespaced Sonar | Required model-semantic search | URL annotations when supplied |
-| Perplexity Sonar | Required standalone-provider search | Citations and search results |
+| Perplexity Agent API research efforts | Required standalone-provider search | ID-linked citations and typed search results |
 
 DeepSeek search-enabled requests keep the Anthropic-compatible native search route on the official endpoint. Chat4J accepts `deepseek-flash` and the documented Claude Code identifier `deepseek-flash[1m]`, alongside the previously supported `deepseek-v4-flash`, `deepseek-v4-pro`, and `deepseek-v4-pro[1m]` identifiers. The retired V4 Flash model name now routes to the current Flash model. Ordinary requests continue through Chat Completions. Chat4J does not switch search requests to Responses: DeepSeek documents Responses `web_search` as supported only by `deepseek-v4-pro` and ignored by `deepseek-flash`.
 
@@ -69,7 +73,9 @@ Native search activity, citations, consulted sources, attachments, cancellation,
 - OpenAI Codex app-server: https://developers.openai.com/codex/app-server
 - Google grounding with Search: https://ai.google.dev/gemini-api/docs/interactions/google-search
 - xAI web search: https://docs.x.ai/developers/tools/web-search
-- Perplexity Sonar API: https://docs.perplexity.ai/api-reference/sonar-post.md
+- Perplexity Agent API migration: https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/how-to.md
+- Perplexity background mode: https://docs.perplexity.ai/docs/agent-api/background-mode.md
+- Perplexity rate limits: https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers.md
 - Groq built-in web search: https://console.groq.com/docs/tool-use/built-in-tools/web-search
 - OpenRouter web search: https://openrouter.ai/docs/guides/features/server-tools/web-search
 - Ollama hosted web search: https://docs.ollama.com/capabilities/web-search
