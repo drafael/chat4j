@@ -103,8 +103,17 @@ jobs:
         run: |
           mkdir -p release-assets
           cp "target/chat4j-${{ needs.metadata.outputs.version }}.jar" "release-assets/chat4j-${{ needs.metadata.outputs.version }}.jar"
+          openhtmltopdf_version="$(mvn -q -DforceStdout help:evaluate -Dexpression=openhtmltopdf.version)"
+          cp "target/openhtmltopdf-core-${openhtmltopdf_version}.jar" release-assets/
+          cp "target/openhtmltopdf-pdfbox-${openhtmltopdf_version}.jar" release-assets/
           cp target/bom.json "release-assets/chat4j-${{ needs.metadata.outputs.version }}-sbom.json"
           cp target/bom.xml "release-assets/chat4j-${{ needs.metadata.outputs.version }}-sbom.xml"
+
+      - name: Verify staged jar distribution
+        run: >-
+          java --enable-preview -cp target/test-classes
+          com.github.drafael.chat4j.verification.ShadedArtifactVerifier
+          "release-assets/chat4j-${{ needs.metadata.outputs.version }}.jar"
 
       - name: Upload jar artifacts
         uses: actions/upload-artifact@v7

@@ -2,6 +2,10 @@
 
 Chat4J release artifacts are currently unsigned and not notarized. macOS Gatekeeper and Windows SmartScreen may warn or block the first launch. Download artifacts only from the [official GitHub Releases page](https://github.com/drafael/chat4j/releases) and verify their SHA-256 checksums before bypassing an operating-system warning.
 
+## JAR distribution
+
+Download `chat4j-<version>.jar` and both `openhtmltopdf-*.jar` companion assets from the same release. Keep all three JARs in the same directory and verify each checksum. The companions are required for PDF export; native installers already include them.
+
 ## Verify a checksum
 
 Download `SHA256SUMS.txt` alongside the artifact, then run the command for your operating system from the download directory.

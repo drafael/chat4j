@@ -14,7 +14,7 @@ Chat4J is a Java 21 desktop client for cloud, OAuth, and local AI providers. It 
 
 ## Install or run
 
-Download the `.dmg`, `.msi`, `.deb`, or shaded JAR from [GitHub Releases](https://github.com/drafael/chat4j/releases). Run the JAR with `java --enable-preview -jar chat4j-<version>.jar`. Release artifacts are currently unsigned, so macOS or Windows may show a first-launch warning. See [release artifact verification](docs/release-artifact-verification.md) before bypassing it.
+Download the `.dmg`, `.msi`, `.deb`, or shaded JAR from [GitHub Releases](https://github.com/drafael/chat4j/releases). For the JAR distribution, also download both `openhtmltopdf-*.jar` assets and keep them beside `chat4j-<version>.jar`; run it with `java --enable-preview -jar chat4j-<version>.jar`. Release artifacts are currently unsigned, so macOS or Windows may show a first-launch warning. See [release artifact verification](docs/release-artifact-verification.md) before bypassing it.
 
 Run from source with Java 21 and Maven:
 
