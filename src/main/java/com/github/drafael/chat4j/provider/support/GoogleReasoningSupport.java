@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * GenerateContent and OpenAI-compatibility thinking contracts, checked 2026-10-04.
+ * GenerateContent and OpenAI-compatibility thinking controls; Gemini 4 Argon checked 2026-10-25.
  * @see <a href="https://ai.google.dev/gemini-api/docs/generate-content/thinking">Native thinking controls</a>
  * @see <a href="https://ai.google.dev/gemini-api/docs/openai">OpenAI compatibility mappings</a>
  */
@@ -26,7 +26,8 @@ public final class GoogleReasoningSupport {
             case "gemini-2.5-flash", "gemini-2.5-flash-lite" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH),
                     model.equals("gemini-2.5-flash-lite") ? ReasoningLevel.OFF : ReasoningLevel.MEDIUM);
-            case "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools" ->
+            case "gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash",
+                 "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools" ->
                     ReasoningOptions.of(List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH),
                             model.contains("pro") ? ReasoningLevel.HIGH : ReasoningLevel.MEDIUM);
             case "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash-preview" -> ReasoningOptions.of(List.of(
@@ -56,7 +57,7 @@ public final class GoogleReasoningSupport {
 
     public static String thinkingLevel(String modelId, @NonNull ReasoningLevel level) {
         return options(modelId).filter(options -> options.levels().size() > 1)
-                .filter(ignored -> model(modelId).startsWith("gemini-3"))
+                .filter(ignored -> !model(modelId).startsWith("gemini-2.5-"))
                 .map(options -> options.select(level).toSettingValue()).orElse(null);
     }
 

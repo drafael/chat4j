@@ -44,6 +44,9 @@ class OpenAiToolAgentAdapterTest {
             "OpenAI | gpt-5 | MINIMAL | reasoning_effort | \"minimal\"",
             "OpenAI | gpt-5.5 | OFF | reasoning_effort | \"none\"",
             "Google AI | gemini-3.8-flash | LOW | reasoning_effort | \"low\"",
+            "Google AI | gemini-4-argon | LOW | reasoning_effort | \"low\"",
+            "Google AI | gemini-4-argon | MEDIUM | reasoning_effort | \"medium\"",
+            "Google AI | gemini-4-argon | HIGH | reasoning_effort | \"high\"",
             "Google AI | gemini-2.5-flash | OFF | reasoning_effort | \"none\"",
             "DeepSeek | deepseek-flash | MAX | reasoning_effort | \"max\"",
             "DeepSeek | deepseek-flash | OFF | thinking | {\"type\":\"disabled\"}",
@@ -102,6 +105,13 @@ class OpenAiToolAgentAdapterTest {
             assertThat(requests).hasSize(2);
             for (String body : requests) {
                 assertThat(JSON.readTree(body).path(property)).isEqualTo(JSON.readTree(expectedJson));
+                if (provider.equals("Google AI")) {
+                    var fields = new ArrayList<String>();
+                    JSON.readTree(body).fieldNames().forEachRemaining(fields::add);
+                    assertThat(fields).doesNotContain(
+                            "temperature", "topP", "topK", "top_p", "top_k", "thinkingBudget", "thinking_budget"
+                    );
+                }
             }
             JsonNode replay = JSON.readTree(requests.get(1)).path("messages").get(2);
             JsonNode original = JSON.readTree(firstResponse).path("choices").get(0).path("message");

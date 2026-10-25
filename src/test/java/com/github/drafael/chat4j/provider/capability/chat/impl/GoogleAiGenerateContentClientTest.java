@@ -67,6 +67,17 @@ class GoogleAiGenerateContentClientTest {
             "gemini-2.5-flash, LOW, 1024,",
             "gemini-2.5-flash, MEDIUM, 8192,",
             "gemini-2.5-flash, HIGH, 24576,",
+            "gemini-2.5-pro, HIGH, 24576,",
+            "gemini-2.5-flash-lite, OFF, 0,",
+            "gemini-3.8-flash, LOW,, low",
+            "gemini-3.8-flash, MEDIUM,, medium",
+            "gemini-3.8-flash, HIGH,, high",
+            "gemini-4-argon, LOW,, low",
+            "gemini-4-argon, MEDIUM,, medium",
+            "gemini-4-argon, HIGH,, high",
+            "gemini-3.6-flash, MINIMAL,, minimal",
+            "gemini-3.6-flash, HIGH,, high",
+            "gemini-3-pro-image-preview, MEDIUM,,",
             "gemini-3.1-pro-preview, LOW,, low",
             "gemini-3.1-pro-preview, HIGH,, high",
             "gemini-3.1-flash-image-preview, MINIMAL,, minimal",
@@ -93,9 +104,78 @@ class GoogleAiGenerateContentClientTest {
                     ignored -> { }, ignored -> { }, ignored -> { }, () -> false, ignored -> { }, () -> { });
             Map<?, ?> request = JsonCodec.standard().read(requestBody.get(), Map.class);
             Map<?, ?> config = (Map<?, ?>) ((Map<?, ?>) request.get("generationConfig")).get("thinkingConfig");
+            assertThat(request.keySet()).extracting(Object::toString)
+                    .doesNotContain("temperature", "topP", "topK", "top_p", "top_k");
+            assertThat(((Map<?, ?>) request.get("generationConfig")).keySet()).extracting(Object::toString)
+                    .doesNotContain("temperature", "topP", "topK", "top_p", "top_k");
+            if (budget == null) {
+                assertThat(config.keySet()).extracting(Object::toString).doesNotContain("thinkingBudget", "thinking_budget");
+            }
+            if (thinkingLevel == null) {
+                assertThat(config.keySet()).extracting(Object::toString).doesNotContain("thinkingLevel", "thinking_level");
+            }
             assertThat(config.get("thinkingBudget")).isEqualTo(budget);
             assertThat(config.get("thinkingLevel")).isEqualTo(thinkingLevel);
             assertThat(config.get("includeThoughts")).isEqualTo(level.enabled());
+            assertThat(tokens).containsExactly("Answer");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "gemini-3.8-flash, LOW, low",
+            "gemini-3.8-flash, MEDIUM, medium",
+            "gemini-3.8-flash, HIGH, high",
+            "gemini-4-argon, LOW, low",
+            "gemini-4-argon, MEDIUM, medium",
+            "gemini-4-argon, HIGH, high",
+            "gemini-3.6-flash, MINIMAL, minimal",
+            "gemini-3.6-flash, HIGH, high",
+            "gemini-2.5-flash, OFF, none"
+    })
+    @DisplayName("Ordinary Google chat sends mapped reasoning effort without deprecated generation fields")
+    void streamCompletion_googleChat_omitsDeprecatedGenerationFields(String model, ReasoningLevel level, String effort) throws Exception {
+        var requestBody = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1beta/openai/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = """
+                    data: {"id":"audit","object":"chat.completion.chunk","created":0,"model":"%s","choices":[{"index":0,"delta":{"content":"Answer"},"finish_reason":"stop"}]}
+
+                    data: [DONE]
+
+                    """.formatted(model).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var authority = ProviderAttachmentTestSupport.authority();
+            var subject = new GoogleAiGenerateContentClient(
+                    new OpenAiChatCompletionClient(authority),
+                    new JavaNetHttpTransport(HttpClient.newHttpClient()),
+                    authority,
+                    mock(GeneratedImageAttachmentWriter.class)
+            );
+            var tokens = new ArrayList<String>();
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d/v1beta/openai".formatted(server.getAddress().getPort()), model),
+                    List.of(Message.user("Reply OK.")),
+                    level,
+                    tokens::add,
+                    ignored -> { },
+                    () -> false,
+                    ignored -> { },
+                    () -> { }
+            );
+            Map<?, ?> request = JsonCodec.standard().read(requestBody.get(), Map.class);
+            assertThat(request.keySet()).extracting(Object::toString)
+                    .doesNotContain("temperature", "topP", "topK", "top_p", "top_k", "thinkingBudget", "thinking_budget");
+            assertThat(request.get("reasoning_effort")).isEqualTo(effort);
             assertThat(tokens).containsExactly("Answer");
         } finally {
             server.stop(0);

@@ -50,6 +50,7 @@ class ProviderCapabilityResolverTest {
     @ParameterizedTest
     @CsvSource({
             "Google AI, gemini-3.8-flash, LOW MEDIUM HIGH, MEDIUM",
+            "Google AI, gemini-4-argon, LOW MEDIUM HIGH, MEDIUM",
             "Google AI, gemini-3.1-pro-preview, LOW MEDIUM HIGH, HIGH",
             "Google AI, gemini-3.5-flash-lite, MINIMAL LOW MEDIUM HIGH, MINIMAL",
             "Google AI, gemini-3.1-flash-image, MINIMAL HIGH, MINIMAL",
