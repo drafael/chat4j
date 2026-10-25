@@ -92,15 +92,12 @@ class ProviderModelsResolverTest {
         updateModels(modelCacheService, "Perplexity", "https://api.perplexity.ai", List.of("sonar-pro", "sonar"));
 
         var subject = new ProviderModelsResolver(modelCacheService);
-        var provider = provider("Perplexity", "https://api.perplexity.ai", PerplexityModelIds.SONAR_MODELS);
+        var provider = provider("Perplexity", "https://api.perplexity.ai", PerplexityModelIds.AGENT_EFFORTS);
 
         Map<String, List<String>> modelsByProvider = subject.resolve(List.of(provider));
 
         assertThat(modelsByProvider.get("Perplexity")).containsExactly(
-                "sonar",
-                "sonar-pro",
-                "sonar-reasoning-pro",
-                "sonar-deep-research"
+                "fast", "low", "medium", "high"
         );
     }
 

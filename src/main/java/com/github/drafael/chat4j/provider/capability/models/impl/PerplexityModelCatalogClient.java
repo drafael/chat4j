@@ -10,6 +10,6 @@ public class PerplexityModelCatalogClient implements ModelCatalogClient {
 
     @Override
     public List<String> fetchModels(ProviderRuntime runtime) {
-        return PerplexityModelIds.SONAR_MODELS;
+        return PerplexityModelIds.AGENT_EFFORTS;
     }
 }

@@ -311,7 +311,7 @@ class ModelSelectorPopupEdtTest {
                 popup.get().hidePopup();
                 popup.get().showCentered(null, null);
                 assertThat(componentTexts(popup.get().getContentPane()))
-                        .anyMatch(text -> text.startsWith("sonar"))
+                        .anyMatch(text -> text.startsWith("fast"))
                         .doesNotContain("Loading models...");
             });
             verify(providerRegistry).availableProviders();

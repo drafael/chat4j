@@ -94,8 +94,8 @@ class ProviderCapabilityResolverTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"sonar-reasoning-pro", "sonar-deep-research"})
-    @DisplayName("Native Sonar reasoning is fixed because its client does not encode effort or disable reasoning")
+    @ValueSource(strings = {"sonar-reasoning-pro", "sonar-deep-research", "low", "medium", "high"})
+    @DisplayName("Perplexity research configurations keep reasoning controls fixed independently of research effort")
     void reasoningOptions_nativeSonar_hasOneEnabledChoice(String model) {
         var subject = ProviderCapabilityResolver.reasoningOptions("Perplexity", model, null, ReasoningOptions.UNAVAILABLE);
         assertThat(subject.levels()).containsExactly(ReasoningLevel.MEDIUM);
@@ -566,12 +566,13 @@ class ProviderCapabilityResolverTest {
         )).isTrue();
     }
 
-    @Test
-    @DisplayName("Perplexity non-reasoning Sonar models keep reasoning disabled")
-    void supportsReasoning_whenPerplexitySearchSonarModelSelected_returnsFalse() {
+    @ParameterizedTest
+    @ValueSource(strings = {"fast", "sonar", "sonar-pro"})
+    @DisplayName("Fast Perplexity research and its saved Sonar aliases keep reasoning disabled")
+    void supportsReasoning_whenPerplexitySearchSonarModelSelected_returnsFalse(String model) {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
                 "Perplexity",
-                "sonar-pro"
+                model
         );
 
         assertThat(supported).isFalse();
@@ -1885,12 +1886,13 @@ class ProviderCapabilityResolverTest {
         }
     }
 
-    @Test
-    @DisplayName("Standalone Perplexity Sonar requires Web Search on custom endpoints")
-    void nativeWebSearchOutcome_whenPerplexitySonarUsesCustomEndpoint_returnsRequired() {
+    @ParameterizedTest
+    @ValueSource(strings = {"sonar", "sonar-pro", "sonar-reasoning-pro", "sonar-deep-research", "fast", "low", "medium", "high"})
+    @DisplayName("Standalone Perplexity research always enables search, including on custom endpoints")
+    void nativeWebSearchOutcome_whenPerplexitySonarUsesCustomEndpoint_returnsRequired(String model) {
         NativeWebSearchOutcome outcome = ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "Perplexity",
-                "sonar-pro",
+                model,
                 "https://proxy.example/v1",
                 "https://api.perplexity.ai"
         );
@@ -2138,18 +2140,19 @@ class ProviderCapabilityResolverTest {
         )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
     }
 
-    @Test
-    @DisplayName("DeepSeek native search requires its official endpoint")
-    void nativeWebSearchOutcome_whenDeepSeekEndpointIsOfficial_returnsOptional() {
+    @ParameterizedTest
+    @ValueSource(strings = {"deepseek-flash", "deepseek-flash[1m]", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-pro[1m]"})
+    @DisplayName("DeepSeek native search requires its official endpoint for current and legacy model identifiers")
+    void nativeWebSearchOutcome_whenDeepSeekEndpointIsOfficial_returnsOptional(String modelId) {
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "DeepSeek",
-                "deepseek-v4-pro",
+                modelId,
                 "https://api.deepseek.com/v1",
                 "https://api.deepseek.com/v1"
         )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "DeepSeek",
-                "deepseek-v4-pro",
+                modelId,
                 "https://proxy.example/v1",
                 "https://api.deepseek.com/v1"
         )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);

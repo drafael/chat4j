@@ -10,6 +10,8 @@ import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,15 +23,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DeepSeekChatCompletionClientTest {
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"deepseek-flash", "deepseek-flash[1m]", "deepseek-v4-pro"})
     @DisplayName("Ordinary DeepSeek requests keep the OpenAI-compatible delegate")
-    void streamCompletion_whenSearchIsDisabled_usesOrdinaryDelegate() throws Exception {
+    void streamCompletion_whenSearchIsDisabled_usesOrdinaryDelegate(String modelId) throws Exception {
         var ordinaryCalled = new AtomicBoolean();
         var nativeCalled = new AtomicBoolean();
         var subject = new DeepSeekChatCompletionClient(client(ordinaryCalled), client(nativeCalled));
 
         subject.streamCompletion(
-                runtime("deepseek-v4-pro", "https://api.deepseek.com"),
+                runtime(modelId, "https://api.deepseek.com"),
                 List.of(Message.user("hello")),
                 ReasoningLevel.OFF,
                 WebSearchRequestOptions.disabled(),
@@ -54,15 +57,16 @@ class DeepSeekChatCompletionClientTest {
         assertThat(nativeCalled).isFalse();
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"deepseek-flash", "deepseek-flash[1m]", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-pro[1m]"})
     @DisplayName("Supported native search requests use only the Anthropic-compatible delegate")
-    void streamCompletion_whenNativeSearchIsSupported_usesNativeDelegate() throws Exception {
+    void streamCompletion_whenNativeSearchIsSupported_usesNativeDelegate(String modelId) throws Exception {
         var ordinaryCalled = new AtomicBoolean();
         var nativeCalled = new AtomicBoolean();
         var subject = new DeepSeekChatCompletionClient(client(ordinaryCalled), client(nativeCalled));
 
         subject.streamCompletion(
-                runtime("deepseek-v4-pro", "https://api.deepseek.com/v1"),
+                runtime(modelId, "https://api.deepseek.com/v1"),
                 List.of(Message.user("latest news")),
                 ReasoningLevel.OFF,
                 new WebSearchRequestOptions(true),
@@ -115,7 +119,7 @@ class DeepSeekChatCompletionClientTest {
                 () -> {
                 }
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("supported V4 model");
+                .hasMessageContaining("supported model");
         assertThat(ordinaryCalled).isFalse();
         assertThat(nativeCalled).isFalse();
     }

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.util.Optional;
 
@@ -36,6 +37,9 @@ public final class ModelSelectionCodec {
             return Optional.empty();
         }
 
+        if (Strings.CS.equals(providerName, "Perplexity") && PerplexityModelIds.isAgentOption(modelId)) {
+            modelId = PerplexityModelIds.agentEffort(modelId);
+        }
         return Optional.of(new ModelSelection(providerName, modelId));
     }
 

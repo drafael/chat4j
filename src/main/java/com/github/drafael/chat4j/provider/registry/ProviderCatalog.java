@@ -99,7 +99,7 @@ final class ProviderCatalog {
                         null,
                         "https://api.perplexity.ai",
                         copilotModelMetadataStore,
-                        PerplexityModelIds.SONAR_MODELS,
+                        PerplexityModelIds.AGENT_EFFORTS,
                         ProviderCapabilities.chatAndModels(),
                         attachmentSupport
                 ),

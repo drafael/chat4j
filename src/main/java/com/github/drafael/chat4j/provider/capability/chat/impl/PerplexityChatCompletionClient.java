@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
-import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.chat.render.BoundedUtf8;
 import com.github.drafael.chat4j.http.HttpBody;
 import com.github.drafael.chat4j.http.HttpCall;
@@ -8,6 +7,7 @@ import com.github.drafael.chat4j.http.HttpExchangeRequest;
 import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.http.JavaNetHttpTransport;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
@@ -17,45 +17,45 @@ import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
+import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.math.NumberUtils;
 
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
-import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
-import static java.util.stream.IntStream.range;
 
+@Slf4j
 public class PerplexityChatCompletionClient implements ChatCompletionClient {
 
     private static final JsonCodec JSON = JsonCodec.standard();
-    private static final Pattern CITATION_MARKER_PATTERN = Pattern.compile("\\[(\\d+)]");
+    private static final Pattern CITATION_MARKER_PATTERN = Pattern.compile("\\[((?:[a-z_]+:)?\\d+)]", Pattern.CASE_INSENSITIVE);
     private static final Pattern DUPLICATE_LINKED_CITATION_PATTERN = Pattern.compile(
             "(\\s\\[(\\d+)]\\((<[^>]+>|[^)]+)\\))(?:\\s+\\[\\2]\\(\\3\\))+"
     );
-    private static final String DEEP_RESEARCH_MODEL = "sonar-deep-research";
     private static final Duration SYNC_REQUEST_TIMEOUT = Duration.ofSeconds(90);
-    private static final Duration ASYNC_REQUEST_TIMEOUT = Duration.ofSeconds(30);
-    private static final Duration DEEP_RESEARCH_ASYNC_TIMEOUT = Duration.ofMinutes(15);
-    private static final Duration DEEP_RESEARCH_POLL_INTERVAL = Duration.ofSeconds(2);
+    private static final Duration BACKGROUND_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration BACKGROUND_TIMEOUT = Duration.ofMinutes(15);
+    private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
 
     private final HttpTransport transport = new JavaNetHttpTransport();
     private final ProviderAttachmentSupport attachmentSupport;
@@ -106,13 +106,10 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
-        Consumer<String> safeOnToken = noOpIfNull(onToken);
-        Consumer<CitationRef> safeOnCitation = noOpIfNull(onCitation);
-
         if (shouldStop(isCancelled)) {
             return;
         }
-
+        String effort = PerplexityModelIds.agentEffort(runtime.selectedModel());
         AttachmentProjectionPlan projectionPlan = AttachmentProjectionPlan.create(
                 history,
                 attachmentSupport,
@@ -122,153 +119,147 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         if (shouldStop(isCancelled)) {
             return;
         }
-        if (isDeepResearchModel(runtime.selectedModel())) {
-            streamDeepResearchCompletion(
-                    runtime,
-                    projectionPlan,
-                    safeOnToken,
-                    safeOnCitation,
-                    isCancelled,
-                    registerActiveStream,
-                    clearActiveStream
-            );
-            return;
-        }
 
+        boolean background = !Strings.CS.equals(effort, "fast");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("effort", effort);
+        body.put("input", projectionPlan.messages().stream().map(this::toMessage).toList());
+        body.put("stream", false);
+        body.put("store", background);
+        if (background) {
+            body.put("background", true);
+        }
         HttpExchangeRequest request = authorizedRequest(
                 runtime,
-                chatCompletionsEndpoint(runtime.baseUrl()),
+                agentEndpoint(runtime.baseUrl()),
                 "POST",
-                buildRequestBody(runtime, projectionPlan, true),
-                SYNC_REQUEST_TIMEOUT
+                JSON.writeString(body),
+                background ? BACKGROUND_REQUEST_TIMEOUT : SYNC_REQUEST_TIMEOUT
         );
-
         HttpExchangeResponse response = send(request, isCancelled, registerActiveStream, clearActiveStream);
+        requireSuccess(response, "Perplexity chat failed");
+        Map<String, Object> root = readObject(response.body());
+        if (background) {
+            root = awaitBackgroundResponse(runtime, root, isCancelled, registerActiveStream, clearActiveStream);
+        }
         if (shouldStop(isCancelled)) {
             return;
         }
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException(httpErrorMessage("Perplexity chat failed", response));
+        requireCompleted(root);
+        FormattedResponse formatted = formatResponse(root);
+        if (StringUtils.isBlank(formatted.text())) {
+            throw new IllegalStateException("Perplexity response completed without assistant output");
         }
-
-        emitFormattedResponse(response.bodyText(), safeOnToken, safeOnCitation, isCancelled);
+        if (shouldStop(isCancelled)) {
+            return;
+        }
+        noOpIfNull(onToken).accept(formatted.text());
+        for (CitationRef citation : formatted.citations()) {
+            if (shouldStop(isCancelled)) {
+                return;
+            }
+            noOpIfNull(onCitation).accept(citation);
+        }
     }
 
-    private void streamDeepResearchCompletion(
+    private Map<String, Object> awaitBackgroundResponse(
             ProviderRuntime runtime,
-            AttachmentProjectionPlan projectionPlan,
-            Consumer<String> onToken,
-            Consumer<CitationRef> onCitation,
+            Map<String, Object> submitted,
             BooleanSupplier isCancelled,
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
-        HttpExchangeRequest request = authorizedRequest(
-                runtime,
-                asyncSonarEndpoint(runtime.baseUrl()),
-                "POST",
-                buildAsyncRequestBody(runtime, projectionPlan),
-                ASYNC_REQUEST_TIMEOUT
-        );
-
-        HttpExchangeResponse response = send(request, isCancelled, registerActiveStream, clearActiveStream);
-        if (shouldStop(isCancelled)) {
-            return;
+        Map<String, Object> root = submitted;
+        String requestId = stringValue(root.get("id"));
+        if (!isTerminal(root) && StringUtils.isBlank(requestId)) {
+            throw new IllegalStateException("Perplexity background response is missing its id");
         }
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException(httpErrorMessage("Perplexity deep research submit failed", response));
-        }
-
-        Map<String, Object> submitted = readObject(response.body());
-        Map<String, Object> completedResponse = completedAsyncResponse(submitted);
-        if (completedResponse != null) {
-            emitFormattedResponse(JSON.writeString(completedResponse), onToken, onCitation, isCancelled);
-            return;
-        }
-
-        String requestId = stringValue(submitted.get("id"));
-        if (StringUtils.isBlank(requestId)) {
-            throw new IllegalStateException("Perplexity deep research submit failed: missing async request id");
-        }
-
-        Map<String, Object> asyncResponse = pollAsyncResponse(runtime, requestId, isCancelled, registerActiveStream, clearActiveStream);
-        emitFormattedResponse(JSON.writeString(asyncResponse), onToken, onCitation, isCancelled);
-    }
-
-    private HttpExchangeRequest authorizedRequest(
-            ProviderRuntime runtime,
-            String endpoint,
-            String method,
-            String body,
-            Duration timeout
-    ) {
-        return new HttpExchangeRequest(
-                method,
-                URI.create(endpoint),
-                java.util.Map.of(
-                        "Authorization", "Bearer %s".formatted(runtime.apiKey()),
-                        "Content-Type", "application/json"
-                ),
-                HttpBody.utf8(body),
-                timeout,
-                0
-        );
-    }
-
-    private void emitFormattedResponse(
-            String responseBody,
-            Consumer<String> onToken,
-            Consumer<CitationRef> onCitation,
-            BooleanSupplier isCancelled
-    ) throws Exception {
-        if (shouldStop(isCancelled)) {
-            return;
-        }
-        FormattedResponse formattedResponse = formatResponse(responseBody);
-        if (shouldStop(isCancelled)) {
-            return;
-        }
-        if (StringUtils.isNotBlank(formattedResponse.text())) {
-            onToken.accept(formattedResponse.text());
-        }
-        for (CitationRef citation : formattedResponse.citations()) {
-            if (shouldStop(isCancelled)) {
-                return;
+        long deadline = System.nanoTime() + BACKGROUND_TIMEOUT.toNanos();
+        Duration delay = POLL_INTERVAL;
+        try {
+            while (!isTerminal(root)) {
+                waitBeforeNextPoll(isCancelled, delay, deadline);
+                if (System.nanoTime() >= deadline) {
+                    throw new HttpTimeoutException("Perplexity research timed out after %d minutes".formatted(BACKGROUND_TIMEOUT.toMinutes()));
+                }
+                HttpExchangeRequest poll = authorizedRequest(
+                        runtime,
+                        responseEndpoint(runtime.baseUrl(), requestId),
+                        "GET",
+                        "",
+                        BACKGROUND_REQUEST_TIMEOUT
+                );
+                HttpExchangeResponse response = send(poll, isCancelled, registerActiveStream, clearActiveStream);
+                if (response.statusCode() == 429) {
+                    delay = retryDelay(response);
+                    continue;
+                }
+                requireSuccess(response, "Perplexity research poll failed");
+                root = readObject(response.body());
+                delay = POLL_INTERVAL;
             }
-            onCitation.accept(citation);
+            return root;
+        } finally {
+            if (!isTerminal(root)) {
+                cancelBackgroundResponse(runtime, requestId);
+            }
         }
     }
 
-    private String buildRequestBody(
-            ProviderRuntime runtime,
-            AttachmentProjectionPlan projectionPlan,
-            boolean includeStream
-    ) {
-        return JSON.writeString(requestBody(runtime, projectionPlan, includeStream));
-    }
-
-    private Map<String, Object> requestBody(
-            ProviderRuntime runtime,
-            AttachmentProjectionPlan projectionPlan,
-            boolean includeStream
-    ) {
-        Map<String, Object> root = new LinkedHashMap<>();
-        root.put("model", runtime.selectedModel());
-        if (includeStream) {
-            root.put("stream", false);
+    private void cancelBackgroundResponse(ProviderRuntime runtime, String requestId) {
+        // Local cancellation interrupts the worker; the separate server-side cancellation still needs to run.
+        boolean interrupted = Thread.interrupted();
+        try {
+            HttpExchangeRequest request = authorizedRequest(
+                    runtime,
+                    "%s/cancel".formatted(responseEndpoint(runtime.baseUrl(), requestId)),
+                    "POST",
+                    "",
+                    BACKGROUND_REQUEST_TIMEOUT
+            );
+            HttpExchangeResponse response = transport.send(request, () -> false);
+            long deadline = System.nanoTime() + BACKGROUND_REQUEST_TIMEOUT.toNanos();
+            while (response.statusCode() == 429 && System.nanoTime() < deadline) {
+                waitBeforeNextPoll(() -> false, retryDelay(response), deadline);
+                if (System.nanoTime() < deadline) {
+                    response = transport.send(request, () -> false);
+                }
+            }
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("Perplexity background cancellation returned HTTP {}; the run may still be active", response.statusCode());
+            }
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            log.warn("Perplexity background cancellation failed ({}); the run may still be active", e.getClass().getSimpleName());
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
-        root.put("messages", projectionPlan.messages().stream().map(this::toMessage).toList());
-        return root;
     }
 
-    private String buildAsyncRequestBody(ProviderRuntime runtime, AttachmentProjectionPlan projectionPlan) {
-        return JSON.writeString(Map.of("request", requestBody(runtime, projectionPlan, false)));
+    private boolean isTerminal(Map<String, Object> root) {
+        return Strings.CS.equalsAny(stringValue(root.get("status")), "completed", "failed", "cancelled", "incomplete");
+    }
+
+    private void requireCompleted(Map<String, Object> root) {
+        String status = stringValue(root.get("status"));
+        if (!Strings.CS.equals(status, "completed")) {
+            Map<String, Object> error = objectMap(root.get("error"));
+            String detail = error == null ? "" : stringValue(error.get("message"));
+            throw new IllegalStateException("Perplexity response %s%s".formatted(
+                    StringUtils.defaultIfBlank(status, "has no status"),
+                    StringUtils.isBlank(detail) ? "" : ": %s".formatted(BoundedUtf8.presentation(detail, 500, 2_000))
+            ));
+        }
     }
 
     private Map<String, Object> toMessage(ProjectedMessage message) {
         return Map.of(
-                "role", message.role().name().toLowerCase(),
+                "type", "message",
+                "role", message.role().name().toLowerCase(Locale.ROOT),
                 "content", message.parts().stream()
                         .map(AttachmentProjectionPlan::textFallback)
                         .filter(StringUtils::isNotBlank)
@@ -276,75 +267,83 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         );
     }
 
-    private FormattedResponse formatResponse(String body) throws Exception {
-        Map<String, Object> root = readObject(body);
-        String answer = answer(root);
-        List<Source> sources = sources(root);
-        List<CitationRef> citations = citations(sources);
-        if (sources.isEmpty()) {
+    private FormattedResponse formatResponse(Map<String, Object> root) {
+        String answer = outputItems(root)
+                .filter(item -> Strings.CS.equals(stringValue(item.get("type")), "message"))
+                .filter(item -> Strings.CS.equals(stringValue(item.get("role")), "assistant"))
+                .flatMap(item -> objectItems(item.get("content")))
+                .filter(part -> Strings.CS.equals(stringValue(part.get("type")), "output_text"))
+                .map(part -> stringValue(part.get("text")))
+                .collect(joining("\n"));
+        CitationAccumulator accumulator = new CitationAccumulator();
+        Map<String, CitationRef> byMarker = new LinkedHashMap<>();
+        Map<Integer, CitationRef> byNumber = new LinkedHashMap<>();
+        outputItems(root)
+                .filter(item -> Strings.CS.equals(stringValue(item.get("type")), "search_results"))
+                .flatMap(item -> objectItems(item.get("results")))
+                .forEach(result -> addSource(result, accumulator, byMarker, byNumber));
+        List<CitationRef> citations = List.copyOf(byNumber.values());
+        if (citations.isEmpty()) {
             return new FormattedResponse(answer, citations);
         }
-
-        String linkedAnswer = linkInlineCitationMarkers(answer, sources);
-        String sourceRefs = hasCitationMarkers(answer) ? "" : " %s".formatted(sourceReferences(sources));
-        String sourceList = numberedSourceList(sources);
-        return new FormattedResponse("%s%s\n\nSources:\n%s".formatted(
-                StringUtils.defaultString(linkedAnswer).trim(),
-                sourceRefs,
-                sourceList
-        ).trim(), citations);
-    }
-
-    private String numberedSourceList(List<Source> sources) {
-        return range(0, sources.size())
-                .mapToObj(index -> "%d. %s".formatted(index + 1, sources.get(index).display()))
+        String linked = linkInlineCitationMarkers(answer, byMarker);
+        String refs = CITATION_MARKER_PATTERN.matcher(answer).find() ? "" : " %s".formatted(citations.stream()
+                .map(this::sourceReference)
+                .collect(joining(" ")));
+        String sourceList = citations.stream()
+                .map(citation -> "%d. %s".formatted(citation.number(), sourceDisplay(citation)))
                 .collect(joining("\n"));
+        return new FormattedResponse("%s%s\n\nSources:\n%s".formatted(linked.trim(), refs, sourceList).trim(), citations);
     }
 
-    private List<CitationRef> citations(List<Source> sources) {
-        if (sources.isEmpty()) {
-            return emptyList();
-        }
-
-        CitationAccumulator citationAccumulator = new CitationAccumulator();
-        return sources.stream()
-                .map(Source::citation)
-                .flatMap(Optional::stream)
-                .map(citationAccumulator::add)
-                .toList();
+    private void addSource(
+            Map<String, Object> result,
+            CitationAccumulator accumulator,
+            Map<String, CitationRef> byMarker,
+            Map<Integer, CitationRef> byNumber
+    ) {
+        String url = normalizeUrl(stringValue(result.get("url")));
+        String snippet = StringUtils.defaultIfBlank(stringValue(result.get("snippet")), stringValue(result.get("content")));
+        UrlCitationMapper.fromUrl(stringValue(result.get("title")), url, snippet).ifPresent(source -> {
+            CitationRef citation = accumulator.add(source);
+            byNumber.putIfAbsent(citation.number(), citation);
+            Object id = result.get("id");
+            if (id instanceof Number || id instanceof String) {
+                String marker = id.toString();
+                String type = StringUtils.defaultIfBlank(stringValue(result.get("source")), "web").toLowerCase(Locale.ROOT);
+                byMarker.putIfAbsent("%s:%s".formatted(type, marker), citation);
+                if (Strings.CS.equals(type, "web")) {
+                    byMarker.putIfAbsent(marker, citation);
+                }
+            }
+        });
     }
 
-    private List<Source> sources(Map<String, Object> root) {
-        Set<String> seenUrls = new LinkedHashSet<>();
-        List<Source> sources = new ArrayList<>();
-
-        if (root.get("search_results") instanceof List<?> searchResults) {
-            searchResults.stream().map(this::objectMap).filter(java.util.Objects::nonNull).forEach(result -> addSource(
-                    sources,
-                    seenUrls,
-                    stringValue(result.get("title")),
-                    stringValue(result.get("url")),
-                    searchResultCitedText(result)
-            ));
+    private String linkInlineCitationMarkers(String answer, Map<String, CitationRef> byMarker) {
+        Matcher matcher = CITATION_MARKER_PATTERN.matcher(answer);
+        StringBuilder linked = new StringBuilder();
+        while (matcher.find()) {
+            CitationRef citation = byMarker.get(matcher.group(1).toLowerCase(Locale.ROOT));
+            if (citation == null) {
+                matcher.appendReplacement(linked, Matcher.quoteReplacement(matcher.group()));
+                continue;
+            }
+            String prefix = matcher.start() > 0 && Character.isWhitespace(answer.charAt(matcher.start() - 1)) ? "" : " ";
+            matcher.appendReplacement(linked, Matcher.quoteReplacement("%s%s".formatted(prefix, sourceReference(citation))));
         }
-        if (root.get("citations") instanceof List<?> citations) {
-            citations.forEach(citation -> addSource(sources, seenUrls, "", stringValue(citation), ""));
-        }
-        return sources;
+        matcher.appendTail(linked);
+        return DUPLICATE_LINKED_CITATION_PATTERN.matcher(linked).replaceAll("$1");
     }
 
-    private String searchResultCitedText(Map<String, Object> result) {
-        String snippet = stringValue(result.get("snippet"));
-        return StringUtils.isBlank(snippet) ? stringValue(result.get("content")) : snippet;
+    private String sourceReference(CitationRef citation) {
+        return "[%d](%s)".formatted(citation.number(), markdownLinkDestination(citation.url()));
     }
 
-    private void addSource(List<Source> sources, Set<String> seenUrls, String title, String url, String snippet) {
-        String normalizedUrl = normalizeUrl(url);
-        if (StringUtils.isBlank(normalizedUrl) || !seenUrls.add(normalizedUrl)) {
-            return;
-        }
-
-        sources.add(new Source(StringUtils.trimToEmpty(title), normalizedUrl, StringUtils.trimToEmpty(snippet)));
+    private String sourceDisplay(CitationRef citation) {
+        String title = citation.title().replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]");
+        return StringUtils.isBlank(title)
+                ? markdownLinkDestination(citation.url())
+                : "[%s](%s)".formatted(title, markdownLinkDestination(citation.url()));
     }
 
     private String normalizeUrl(String url) {
@@ -355,145 +354,48 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         return normalized;
     }
 
-    private String linkInlineCitationMarkers(String answer, List<Source> sources) {
-        if (StringUtils.isBlank(answer) || sources.isEmpty()) {
-            return StringUtils.defaultString(answer);
-        }
-
-        Matcher matcher = CITATION_MARKER_PATTERN.matcher(answer);
-        StringBuilder linked = new StringBuilder();
-        while (matcher.find()) {
-            int sourceIndex;
-            try {
-                sourceIndex = Integer.parseInt(matcher.group(1)) - 1;
-            } catch (NumberFormatException e) {
-                matcher.appendReplacement(linked, Matcher.quoteReplacement(matcher.group()));
-                continue;
-            }
-            if (sourceIndex < 0 || sourceIndex >= sources.size()) {
-                matcher.appendReplacement(linked, Matcher.quoteReplacement(matcher.group()));
-                continue;
-            }
-
-            String prefix = matcher.start() > 0 && Character.isWhitespace(answer.charAt(matcher.start() - 1)) ? "" : " ";
-            String replacement = "%s[%d](%s)".formatted(
-                    prefix,
-                    sourceIndex + 1,
-                    markdownLinkDestination(sources.get(sourceIndex).url())
-            );
-            matcher.appendReplacement(linked, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(linked);
-        return collapseDuplicateLinkedCitations(linked.toString());
+    private Stream<Map<String, Object>> outputItems(Map<String, Object> root) {
+        return objectItems(root.get("output"));
     }
 
-    private String collapseDuplicateLinkedCitations(String text) {
-        return DUPLICATE_LINKED_CITATION_PATTERN.matcher(text).replaceAll("$1");
+    private Stream<Map<String, Object>> objectItems(Object value) {
+        return value instanceof List<?> items
+                ? items.stream().map(this::objectMap).filter(Objects::nonNull)
+                : Stream.empty();
     }
 
-    private boolean hasCitationMarkers(String answer) {
-        return StringUtils.isNotBlank(answer) && CITATION_MARKER_PATTERN.matcher(answer).find();
-    }
-
-    private String sourceReferences(List<Source> sources) {
-        StringBuilder references = new StringBuilder();
-        for (int i = 0; i < sources.size(); i++) {
-            if (!references.isEmpty()) {
-                references.append(" ");
-            }
-            references.append("[%d](%s)".formatted(i + 1, markdownLinkDestination(sources.get(i).url())));
-        }
-        return references.toString();
-    }
-
-    private String chatCompletionsEndpoint(String baseUrl) {
-        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-        return "%s/chat/completions".formatted(normalizedBaseUrl);
-    }
-
-    private String asyncSonarEndpoint(String baseUrl) {
-        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-        return normalizedBaseUrl.endsWith("/v1")
-                ? "%s/async/sonar".formatted(normalizedBaseUrl)
-                : "%s/v1/async/sonar".formatted(normalizedBaseUrl);
-    }
-
-    private String asyncSonarRequestEndpoint(String baseUrl, String requestId) {
-        return "%s/%s".formatted(asyncSonarEndpoint(baseUrl), URLEncoder.encode(requestId, StandardCharsets.UTF_8));
-    }
-
-    private String normalizeBaseUrl(String baseUrl) {
-        String normalizedBaseUrl = StringUtils.defaultIfBlank(baseUrl, "https://api.perplexity.ai").trim();
-        return Strings.CS.removeEnd(normalizedBaseUrl, "/");
-    }
-
-    private Map<String, Object> pollAsyncResponse(
-            ProviderRuntime runtime,
-            String requestId,
-            BooleanSupplier isCancelled,
-            Consumer<AutoCloseable> registerActiveStream,
-            Runnable clearActiveStream
-    ) throws Exception {
-        long deadlineNanos = System.nanoTime() + DEEP_RESEARCH_ASYNC_TIMEOUT.toNanos();
-        while (System.nanoTime() < deadlineNanos) {
-            if (shouldStop(isCancelled)) {
-                throw new InterruptedException("Perplexity deep research cancelled");
-            }
-
-            HttpExchangeRequest request = authorizedRequest(
-                    runtime,
-                    asyncSonarRequestEndpoint(runtime.baseUrl(), requestId),
-                    "GET",
-                    "",
-                    ASYNC_REQUEST_TIMEOUT
-            );
-            HttpExchangeResponse response = send(request, isCancelled, registerActiveStream, clearActiveStream);
-            if (shouldStop(isCancelled)) {
-                throw new InterruptedException("Perplexity deep research cancelled");
-            }
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException(httpErrorMessage("Perplexity deep research poll failed", response));
-            }
-
-            Map<String, Object> root = readObject(response.body());
-            Map<String, Object> completedResponse = completedAsyncResponse(root);
-            if (completedResponse != null) {
-                return completedResponse;
-            }
-            waitBeforeNextPoll(isCancelled);
-        }
-
-        throw new HttpTimeoutException(
-                "Perplexity sonar-deep-research timed out after %d minute(s); try a narrower prompt or retry later"
-                        .formatted(DEEP_RESEARCH_ASYNC_TIMEOUT.toMinutes())
+    private HttpExchangeRequest authorizedRequest(ProviderRuntime runtime, String endpoint, String method, String body, Duration timeout) {
+        return new HttpExchangeRequest(
+                method,
+                URI.create(endpoint),
+                Map.of("Authorization", "Bearer %s".formatted(runtime.apiKey()), "Content-Type", "application/json"),
+                HttpBody.utf8(body),
+                timeout,
+                0
         );
     }
 
-    private Map<String, Object> completedAsyncResponse(Map<String, Object> root) {
-        String errorMessage = stringValue(root.get("error_message"));
-        if (root.get("failed_at") != null || Strings.CI.equals(stringValue(root.get("status")), "FAILED")) {
-            throw new IllegalStateException(StringUtils.defaultIfBlank(errorMessage, "Perplexity deep research failed"));
-        }
-
-        Map<String, Object> response = objectMap(root.get("response"));
-        if (response != null && response.containsKey("choices")) {
-            return response;
-        }
-
-        if (root.get("completed_at") != null) {
-            throw new IllegalStateException("Perplexity deep research completed without a response");
-        }
-
-        return null;
+    private String agentEndpoint(String baseUrl) {
+        String normalized = Strings.CS.removeEnd(StringUtils.defaultIfBlank(baseUrl, "https://api.perplexity.ai").trim(), "/");
+        return normalized.endsWith("/v1") ? "%s/agent".formatted(normalized) : "%s/v1/agent".formatted(normalized);
     }
 
-    private void waitBeforeNextPoll(BooleanSupplier isCancelled) throws InterruptedException {
-        long deadlineNanos = System.nanoTime() + DEEP_RESEARCH_POLL_INTERVAL.toNanos();
-        while (System.nanoTime() < deadlineNanos) {
+    private String responseEndpoint(String baseUrl, String requestId) {
+        return "%s/%s".formatted(agentEndpoint(baseUrl), URLEncoder.encode(requestId, StandardCharsets.UTF_8));
+    }
+
+    private Duration retryDelay(HttpExchangeResponse response) {
+        long seconds = NumberUtils.toLong(response.firstHeader("Retry-After"), POLL_INTERVAL.toSeconds());
+        return Duration.ofSeconds(Math.max(POLL_INTERVAL.toSeconds(), seconds));
+    }
+
+    private void waitBeforeNextPoll(BooleanSupplier isCancelled, Duration delay, long runDeadline) throws InterruptedException {
+        long deadline = Math.min(runDeadline, System.nanoTime() + delay.toNanos());
+        while (System.nanoTime() < deadline) {
             if (shouldStop(isCancelled)) {
-                throw new InterruptedException("Perplexity deep research cancelled");
+                throw new InterruptedException("Perplexity research cancelled");
             }
-            long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
+            long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
             try {
                 Thread.sleep(Math.min(Math.max(remainingMillis, 1L), 100L));
             } catch (InterruptedException e) {
@@ -513,12 +415,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             throw new InterruptedException("Perplexity chat cancelled");
         }
         try (HttpCall call = transport.open(request)) {
-            try {
-                registerActiveStream.accept(call);
-            } catch (RuntimeException e) {
-                call.close();
-                throw e;
-            }
+            registerActiveStream.accept(call);
             try {
                 return call.await(isCancelled);
             } finally {
@@ -527,15 +424,18 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         }
     }
 
+    private void requireSuccess(HttpExchangeResponse response, String prefix) {
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException(httpErrorMessage(prefix, response));
+        }
+    }
+
     private String httpErrorMessage(String prefix, HttpExchangeResponse response) {
         String message = "";
         try {
             Map<String, Object> root = readObject(response.body());
             Map<String, Object> error = objectMap(root.get("error"));
-            message = StringUtils.defaultIfBlank(
-                    error == null ? "" : stringValue(error.get("message")),
-                    stringValue(root.get("message"))
-            );
+            message = StringUtils.defaultIfBlank(error == null ? "" : stringValue(error.get("message")), stringValue(root.get("message")));
         } catch (Exception ignored) {
             // Use the fixed status-only fallback for unrecognized responses.
         }
@@ -545,23 +445,8 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
                 : "%s: HTTP %d: %s".formatted(prefix, response.statusCode(), safeMessage);
     }
 
-    private String answer(Map<String, Object> root) {
-        Object choicesValue = root.get("choices");
-        if (!(choicesValue instanceof List<?> choices) || choices.isEmpty()) {
-            return "";
-        }
-        Map<String, Object> choice = objectMap(choices.getFirst());
-        Map<String, Object> message = choice == null ? null : objectMap(choice.get("message"));
-        return message == null ? "" : stringValue(message.get("content"));
-    }
-
     @SuppressWarnings("unchecked")
     private Map<String, Object> readObject(byte[] json) {
-        return JSON.read(json, Map.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> readObject(String json) {
         return JSON.read(json, Map.class);
     }
 
@@ -574,10 +459,6 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         return value instanceof String text ? text : "";
     }
 
-    private boolean isDeepResearchModel(String modelId) {
-        return Strings.CI.equals(StringUtils.trimToEmpty(modelId), DEEP_RESEARCH_MODEL);
-    }
-
     private boolean shouldStop(BooleanSupplier isCancelled) {
         return Thread.currentThread().isInterrupted() || (isCancelled != null && isCancelled.getAsBoolean());
     }
@@ -587,28 +468,10 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         } : consumer;
     }
 
-    private static String markdownLinkDestination(String url) {
+    private String markdownLinkDestination(String url) {
         return "<%s>".formatted(StringUtils.defaultString(url).replace(">", "%3E"));
     }
 
     private record FormattedResponse(String text, List<CitationRef> citations) {
-    }
-
-    private record Source(String title, String url, String snippet) {
-        private String display() {
-            return StringUtils.isBlank(title)
-                    ? markdownLinkDestination(url)
-                    : "[%s](%s)".formatted(markdownLinkText(title), markdownLinkDestination(url));
-        }
-
-        private Optional<CitationRef> citation() {
-            return UrlCitationMapper.fromUrl(title, url, snippet);
-        }
-
-        private String markdownLinkText(String text) {
-            return StringUtils.defaultString(text)
-                    .replace("[", "\\[")
-                    .replace("]", "\\]");
-        }
     }
 }
