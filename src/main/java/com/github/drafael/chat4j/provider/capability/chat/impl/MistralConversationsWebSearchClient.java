@@ -17,6 +17,7 @@ import com.github.drafael.chat4j.provider.support.MistralNativeWebSearchSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -169,7 +170,7 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
                 inputs,
                 StringUtils.isBlank(instructions) ? null : instructions,
                 List.of(new MistralConversationsApi.Tool("web_search")),
-                new MistralConversationsApi.CompletionArgs(reasoningEffort(level))
+                new MistralConversationsApi.CompletionArgs(reasoningEffort(model, level))
         );
     }
 
@@ -187,7 +188,15 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
                 .collect(joining("\n\n"));
     }
 
-    private String reasoningEffort(ReasoningLevel level) {
+    private String reasoningEffort(String model, ReasoningLevel level) {
+        if (Strings.CS.equalsAny(model, "mistral-large-4", "mistral-large-4-0")) {
+            // Large 4 renamed the preview's "none" effort to "low".
+            return switch (level) {
+                case OFF, LOW -> "low";
+                case MEDIUM -> "medium";
+                default -> "high";
+            };
+        }
         return level.enabled() ? "high" : "none";
     }
 

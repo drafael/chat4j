@@ -150,7 +150,9 @@ public final class ProviderCapabilityResolver {
             return switch (StringUtils.trimToEmpty(modelId)) {
                 case "mistral-small-latest", "mistral-small-2603", "mistral-medium-3-5", "mistral-medium-latest",
                      "mistral-medium-2604" -> Optional.of(ReasoningOptions.of(List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH), ReasoningLevel.HIGH));
-                case "zai-glm-5-3" -> Optional.of(ReasoningOptions.of(List.of(
+                case "mistral-large-4", "mistral-large-4-0" -> Optional.of(ReasoningOptions.of(List.of(
+                        ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH), ReasoningLevel.HIGH));
+                case "zai-glm-5-3", "zai-glm-5", "zai-glm-latest" -> Optional.of(ReasoningOptions.of(List.of(
                         ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX), ReasoningLevel.HIGH));
                 default -> Optional.empty();
             };
