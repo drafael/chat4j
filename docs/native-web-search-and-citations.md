@@ -19,6 +19,8 @@ Fast requests return a buffered answer with `store:false`. Deeper research uses 
 
 ## Supported native transports
 
+Groq retired `groq/compound` and `groq/compound-mini` on September 21, 2026, without a listed replacement. Their row below describes legacy routing, not a currently available hosted search service; refresh old catalogs rather than treating a cached Compound selection as usable.
+
 | Provider/runtime | Search behavior | Source metadata |
 | --- | --- | --- |
 | Anthropic Claude | Optional native web-search tool | Claim-linked citation deltas |
@@ -31,7 +33,7 @@ Fast requests return a buffered answer with `store:false`. Deeper research uses 
 | OpenAI search-preview models | Required legacy Chat Completions route | Provider response citations |
 | xAI Grok | Optional Responses web search | URL citation annotations |
 | Google Gemini | Optional native `google_search` grounding | Grounding citations |
-| Groq Compound | Required model-semantic search | Search-result citation metadata when supplied |
+| Legacy Groq Compound (hosted models retired) | Historical required model-semantic search | Search-result citation metadata when supplied |
 | OpenRouter `openai/*` models on the official endpoint | Optional `openrouter:web_search` Chat Completions server tool | Claim-linked URL citation annotations when supplied |
 | OpenRouter `:online` / namespaced Sonar | Required model-semantic search | URL annotations when supplied |
 | Perplexity Agent API research efforts | Required standalone-provider search | ID-linked citations and typed search results |

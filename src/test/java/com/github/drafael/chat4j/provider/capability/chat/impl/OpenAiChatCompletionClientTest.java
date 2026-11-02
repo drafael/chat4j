@@ -1088,6 +1088,8 @@ class OpenAiChatCompletionClientTest {
     @ParameterizedTest
     @CsvSource({
             "OpenAI, gpt-5.5, OFF, none",
+            "OpenAI, gpt-6.1-terra, OFF, none",
+            "OpenAI, gpt-6.1-terra, MAX, max",
             "OpenAI, gpt-5, MINIMAL, minimal",
             "Google AI, gemini-2.5-flash, OFF, none",
             "Google AI, gemini-3.8-flash, HIGH, high",
@@ -1431,14 +1433,29 @@ class OpenAiChatCompletionClientTest {
         assertThat(request.get("think")).isNull();
     }
 
-    @Test
+    @ParameterizedTest
+    @CsvSource({"gpt-5.5", "gpt-6.1-terra"})
     @DisplayName("OpenAI Responses explicitly disables reasoning on models that default to thinking")
-    void createResponsesParams_supportedOff_sendsNoneWithoutSummary() {
-        var params = subject.createResponsesParams(runtime("OpenAI", "gpt-5.5", "http://127.0.0.1:1/v1"), emptyList(), ReasoningLevel.OFF, false);
+    void createResponsesParams_supportedOff_sendsNoneWithoutSummary(String model) {
+        var params = subject.createResponsesParams(runtime("OpenAI", model, "http://127.0.0.1:1/v1"), emptyList(), ReasoningLevel.OFF, false);
         assertThat(params.reasoning()).hasValueSatisfying(reasoning -> {
             assertThat(reasoning.effort()).contains(ReasoningEffort.NONE);
             assertThat(reasoning.summary()).isEmpty();
         });
+    }
+
+    @Test
+    @DisplayName("Terra Max is preserved on the Responses API rather than downgraded")
+    void createResponsesParams_terraMax_preservesEffort() {
+        var params = subject.createResponsesParams(
+                runtime("OpenAI", "gpt-6.1-terra", "http://127.0.0.1:1/v1"),
+                emptyList(),
+                ReasoningLevel.MAX,
+                false
+        );
+        assertThat(params.reasoning()).hasValueSatisfying(reasoning ->
+                assertThat(reasoning.effort()).contains(ReasoningEffort.of("max"))
+        );
     }
 
     private Map<?, ?> captureOpenRouterRequest(String model, ReasoningLevel level) throws Exception {

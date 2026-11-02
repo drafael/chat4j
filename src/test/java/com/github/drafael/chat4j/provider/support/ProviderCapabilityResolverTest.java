@@ -36,6 +36,7 @@ class ProviderCapabilityResolverTest {
             "gpt-5.5, OFF LOW MEDIUM HIGH EXTRA_HIGH, MEDIUM",
             "gpt-6-astra, LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
             "gpt-6.1-sol, LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
+            "gpt-6.1-terra, OFF LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
             "gpt-6-sol, OFF LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM",
             "gpt-6-luna, OFF LOW MEDIUM HIGH EXTRA_HIGH MAX, MEDIUM"
     })
@@ -1101,6 +1102,15 @@ class ProviderCapabilityResolverTest {
                 "deepseek-v4-pro",
                 "https://api.deepseek.com/v1",
                 "https://api.deepseek.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"})
+    @DisplayName("Current GPT-6 models expose documented native web search without speculative metadata probes")
+    void nativeWebSearchOutcome_currentGpt6Model_returnsOptional(String model) {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI", model, "https://api.openai.com/v1", "https://api.openai.com/v1"
         )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
     }
 

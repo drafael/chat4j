@@ -10,13 +10,14 @@ import java.util.Set;
 
 import static java.util.Collections.emptyMap;
 
-/** Claude thinking controls reviewed against Anthropic documentation and OpenRouter's catalog on 2026-10-03. */
+/** Claude thinking controls; Haiku 5.5 and Mythos model IDs reviewed against Anthropic docs on 2026-11-02. */
 public final class ClaudeReasoningSupport {
 
     private static final Set<String> ADAPTIVE_MODELS = Set.of(
             "claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
             "claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5",
-            "claude-fable-5", "claude-fable-5-1"
+            "claude-fable-5", "claude-fable-5-1", "claude-haiku-5-5",
+            "claude-mythos-5", "claude-mythos-5-1"
     );
 
     private ClaudeReasoningSupport() {
@@ -35,8 +36,9 @@ public final class ClaudeReasoningSupport {
     private static AnthropicOffMode anthropicOffMode(String modelId) {
         return switch (normalizeModelId(modelId)) {
             case "claude-sonnet-5-5" -> AnthropicOffMode.BETWEEN_TOOLS;
-            case "claude-sonnet-5", "claude-opus-5" -> AnthropicOffMode.DISABLED;
-            case "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1" -> AnthropicOffMode.OMITTED_DISPLAY;
+            case "claude-sonnet-5", "claude-opus-5", "claude-haiku-5-5" -> AnthropicOffMode.DISABLED;
+            case "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1",
+                 "claude-mythos-5", "claude-mythos-5-1" -> AnthropicOffMode.OMITTED_DISPLAY;
             default -> AnthropicOffMode.OMIT_CONFIGURATION;
         };
     }
@@ -97,13 +99,13 @@ public final class ClaudeReasoningSupport {
                 .toList();
     }
 
-    /** General-purpose recommendations from the Claude effort guide, checked 2026-10-04. */
+    /** General-purpose recommendations; Haiku 5.5 Medium default checked against the effort guide on 2026-11-02. */
     public static ReasoningLevel recommendedLevel(String modelId) {
         if (!usesAdaptiveThinking(modelId)) {
             return ReasoningLevel.MEDIUM;
         }
         return switch (normalizeModelId(modelId)) {
-            case "claude-sonnet-4-6", "claude-opus-5-5" -> ReasoningLevel.MEDIUM;
+            case "claude-sonnet-4-6", "claude-opus-5-5", "claude-haiku-5-5" -> ReasoningLevel.MEDIUM;
             default -> ReasoningLevel.HIGH;
         };
     }

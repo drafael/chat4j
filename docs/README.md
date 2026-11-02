@@ -10,6 +10,9 @@ Use this page as the canonical entry point for implementation and operational de
 - [native-web-search-and-citations.md](native-web-search-and-citations.md)
   - Current native-only Web Search behavior, provider support, and citation/source semantics.
 
+- [provider-api-audit-2026-11.md](provider-api-audit-2026-11.md)
+  - November 2026 API compatibility findings, applied fixes, verification limits, and the pending Responses Agent Mode decision.
+
 - [provider-auth-runtime.md](provider-auth-runtime.md)
   - Copilot and Codex authentication, runtime routing, token storage, and provider-specific troubleshooting.
 

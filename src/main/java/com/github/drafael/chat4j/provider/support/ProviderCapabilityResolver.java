@@ -191,7 +191,7 @@ public final class ProviderCapabilityResolver {
             );
             case "gpt-5.2", "gpt-5.4" -> ReasoningOptions.of(ReasoningLevel.standardLevels(), ReasoningLevel.OFF);
             case "gpt-5.5" -> ReasoningOptions.of(ReasoningLevel.standardLevels());
-            case "gpt-6-sol", "gpt-6-luna" -> ReasoningOptions.of(List.of(
+            case "gpt-6-sol", "gpt-6-luna", "gpt-6.1-terra" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX));
             case "gpt-6-astra", "gpt-6.1-sol" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX
