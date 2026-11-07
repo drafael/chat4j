@@ -31,6 +31,10 @@ class AnthropicToolAgentAdapterTest {
 
     @ParameterizedTest
     @CsvSource(value = {
+            "claude-haiku-5-5 | MEDIUM | {\"type\":\"adaptive\",\"display\":\"summarized\"} | medium | 6144",
+            "claude-haiku-5-5 | MAX | {\"type\":\"adaptive\",\"display\":\"summarized\"} | max | 12288",
+            "claude-haiku-5-5 | OFF | {\"type\":\"disabled\"} | low | 4096",
+            "claude-mythos-5-1 | HIGH | {\"type\":\"adaptive\",\"display\":\"summarized\"} | high | 8192",
             "claude-sonnet-4-6 | HIGH | {\"type\":\"adaptive\",\"display\":\"summarized\"} | high | 8192",
             "claude-sonnet-4-6 | OFF | null | null | 4096",
             "claude-sonnet-5-5 | OFF | {\"type\":\"between_tools\"} | low | 4096",

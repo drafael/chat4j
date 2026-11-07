@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Hosted-serverless and capability snapshots reviewed on 2026-08-15;
+ * Hosted-serverless chat catalog refreshed on 2026-11-02; capability snapshots reviewed on 2026-08-15.
  * Kimi K3 and DeepSeek V4 Pro 0813 reasoning controls updated on 2026-10-04.
  *
  * @see <a href="https://docs.together.ai/docs/serverless/models">Together serverless models</a>
@@ -22,6 +22,7 @@ public final class TogetherModelSupport {
 
     private static final String PROVIDER_NAME = "Together";
     private static final String DEFAULT_BASE_URL = "https://api.together.ai/v1";
+    private static final String US_BASE_URL = "https://us-api.together.ai/v1";
 
     private static final String DEEPSEEK_V4_PRO = "deepseek-ai/DeepSeek-V4-Pro";
     private static final String DEEPSEEK_V4_PRO_0813 = "deepseek-ai/DeepSeek-V4-Pro-0813";
@@ -56,7 +57,17 @@ public final class TogetherModelSupport {
             "LiquidAI/LFM2.5-8B-A1B",
             "thinkingmachines/Inkling-Small",
             "Prism-ML/Ternary-Bonsai-27B",
-            "meta-models/Muse-Glimmer-30B"
+            "meta-models/Muse-Glimmer-30B",
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "meta-models/Muse-Spark-Open-816B-A42B",
+            "MiniMaxAI/MiniMax-M3.1-Flash",
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+            "Qwen/Qwen3.8-Flash",
+            "reflection/Beam-1.0-501B-A23B",
+            "together/Tev1-4B-experimental",
+            "zai-org/GLM-5.3",
+            "zai-org/GLM-5.3-Flash"
     );
 
     private static final Set<String> VISION_MODELS = Set.of(
@@ -116,7 +127,7 @@ public final class TogetherModelSupport {
     }
 
     public static boolean isHostedEndpoint(String baseUrl) {
-        return Strings.CS.equals(BaseUrlNormalizer.normalize(baseUrl, ""), DEFAULT_BASE_URL);
+        return Strings.CS.equalsAny(BaseUrlNormalizer.normalize(baseUrl, ""), DEFAULT_BASE_URL, US_BASE_URL);
     }
 
     public static boolean isServerlessChatModel(String modelId) {

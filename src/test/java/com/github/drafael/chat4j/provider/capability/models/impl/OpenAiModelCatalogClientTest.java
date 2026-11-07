@@ -877,6 +877,12 @@ class OpenAiModelCatalogClientTest {
                       "data": [
                         {"id":"mistral-small-latest","object":"model","created":3,"owned_by":"mistral"},
                         {"id":"codestral-latest","object":"model","created":2,"owned_by":"mistral"},
+                        {"id":"mistral-large-4","object":"model","created":4,"owned_by":"mistral"},
+                        {"id":"mistral-large-4-0","object":"model","created":4,"owned_by":"mistral"},
+                        {"id":"zai-glm-5-3-flash","object":"model","created":4,"owned_by":"mistral"},
+                        {"id":"deepseek-v4-1-flash-1017","object":"model","created":4,"owned_by":"mistral"},
+                        {"id":"voxtral-mini-transcribe-3-0","object":"model","created":4,"owned_by":"mistral"},
+                        {"id":"voxtral-mini-tts-3-0","object":"model","created":4,"owned_by":"mistral"},
                         {"id":"mistral-ocr-latest","object":"model","created":1,"owned_by":"mistral"},
                         {"id":"voxtral-mini-latest","object":"model","created":1,"owned_by":"mistral"}
                       ]
@@ -905,7 +911,10 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).containsExactly("mistral-small-latest", "codestral-latest");
+            assertThat(models).containsExactly(
+                    "zai-glm-5-3-flash", "mistral-small-latest", "mistral-large-4-0", "mistral-large-4",
+                    "deepseek-v4-1-flash-1017", "codestral-latest"
+            );
         } finally {
             server.stop(0);
         }
