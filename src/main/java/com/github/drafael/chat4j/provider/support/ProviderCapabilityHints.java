@@ -51,6 +51,7 @@ final class ProviderCapabilityHints {
     static final Set<String> OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
             "gpt-4.1",
             "gpt-5",
+            "gpt-6",
             "o3",
             "o4"
     );

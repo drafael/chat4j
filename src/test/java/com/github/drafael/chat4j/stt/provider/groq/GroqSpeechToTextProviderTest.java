@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
+import com.github.drafael.chat4j.http.HttpBodyTestSupport;
 import com.github.drafael.chat4j.http.HttpExchangeRequest;
 import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.http.HttpTransport;
@@ -16,6 +17,8 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -97,6 +100,40 @@ class GroqSpeechToTextProviderTest {
     }
 
     @Test
+    @DisplayName("Bundled Groq transcription choices exclude retired Distil Whisper")
+    void bundledModels_retiredDistilWhisper_isNotOffered() {
+        var subject = new GroqSpeechToTextProvider(new CapturingTransport(
+                new HttpExchangeResponse(200, emptyMap(), new byte[0])
+        ));
+        assertThat(subject.bundledModels()).extracting(SpeechToTextCatalogItem::id)
+                .containsExactly("whisper-large-v3-turbo", "whisper-large-v3");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "https://api.groq.com/openai/v1, distil-whisper-large-v3-en, whisper-large-v3-turbo",
+            "https://api.groq.com/openai/v1, whisper-large-v3, whisper-large-v3",
+            "https://custom.example/v1, distil-whisper-large-v3-en, distil-whisper-large-v3-en"
+    })
+    @DisplayName("Only the retired hosted Groq model migrates to Turbo while custom deployments retain their IDs")
+    void transcribe_legacyModelSelection_migratesOnlyOfficialEndpoint(String baseUrl, String selected, String expected) throws Exception {
+        Path audio = tempDir.resolve("legacy.wav");
+        Files.writeString(audio, "RIFF-test");
+        var transport = new CapturingTransport(new HttpExchangeResponse(
+                200, emptyMap(), "{\"text\":\"hello\"}".getBytes(StandardCharsets.UTF_8)
+        ));
+        var subject = new GroqSpeechToTextProvider(transport);
+
+        subject.transcribe(
+                new SpeechToTextRequest("groq", selected, audio, 1_000, Files.size(audio)),
+                context(baseUrl)
+        );
+
+        String body = new String(HttpBodyTestSupport.bytes(transport.request.body()), StandardCharsets.UTF_8);
+        assertThat(body).contains("name=\"model\"\r\n\r\n%s\r\n".formatted(expected));
+    }
+
+    @Test
     @DisplayName("Groq transcription rejects blank transcript text")
     void transcribe_whenTextBlank_rejects() throws Exception {
         Path audio = tempDir.resolve("recording.wav");
@@ -121,7 +158,11 @@ class GroqSpeechToTextProviderTest {
     }
 
     private SpeechToTextProviderContext context() throws Exception {
-        GroqSttEndpointResolver.Endpoint endpoint = GroqSttEndpointResolver.resolve("https://api.groq.com/openai/v1/");
+        return context("https://api.groq.com/openai/v1/");
+    }
+
+    private SpeechToTextProviderContext context(String baseUrl) throws Exception {
+        GroqSttEndpointResolver.Endpoint endpoint = GroqSttEndpointResolver.resolve(baseUrl);
         return new SpeechToTextProviderContext(
                 endpoint.baseUri(),
                 endpoint.transcriptionUri(),

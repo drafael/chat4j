@@ -21,6 +21,8 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -186,6 +188,51 @@ class MistralConversationsWebSearchClientTest {
                 }
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("system messages after conversation input");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "mistral-large-4, LOW, low",
+            "mistral-large-4, MEDIUM, medium",
+            "mistral-large-4, HIGH, high",
+            "mistral-large-4, OFF, low",
+            "mistral-large-4-0, LOW, low",
+            "mistral-large-4-0, MEDIUM, medium",
+            "mistral-large-4-0, HIGH, high",
+            "mistral-large-4-0, OFF, low",
+            "mistral-small-latest, OFF, none",
+            "mistral-medium-3-5, MEDIUM, high",
+            "mistral-large-2512, LOW, high"
+    })
+    @DisplayName("Search preserves Large 4's effort ladder without changing older Mistral models")
+    void streamCompletion_modelReasoning_sendsSupportedEffort(String model, ReasoningLevel level, String effort) throws Exception {
+        var capturedBody = new AtomicReference<String>();
+        URI endpoint = startServer(200, successfulFixture(), capturedBody, new AtomicReference<>());
+        var subject = new MistralConversationsWebSearchClient(
+                attachmentSupport,
+                new MistralSseTransport(HttpClient.newHttpClient()),
+                endpoint
+        );
+
+        subject.streamCompletion(
+                runtime("test-key", model),
+                List.of(Message.user("Search")),
+                level,
+                new WebSearchRequestOptions(true),
+                ignored -> { },
+                ignored -> { },
+                ignored -> { },
+                ignored -> { },
+                ignored -> { },
+                () -> false,
+                ignored -> { },
+                () -> { }
+        );
+
+        JsonNode body = JSON.readTree(capturedBody.get());
+        assertThat(body.path("model").asText()).isEqualTo(model);
+        assertThat(body.path("completion_args").path("reasoning_effort").asText()).isEqualTo(effort);
+        assertThat(body.path("store").asBoolean()).isFalse();
     }
 
     @Test
@@ -805,6 +852,10 @@ class MistralConversationsWebSearchClientTest {
     }
 
     private ProviderRuntime runtime(String apiKey) {
+        return runtime(apiKey, "mistral-small-latest");
+    }
+
+    private ProviderRuntime runtime(String apiKey, String model) {
         var descriptor = new ProviderDescriptor(
                 "Mistral",
                 AuthType.ENV_VAR,
@@ -820,7 +871,7 @@ class MistralConversationsWebSearchClientTest {
                 "MISTRAL_API_KEY",
                 "https://api.mistral.ai/v1",
                 apiKey,
-                "mistral-small-latest"
+                model
         );
     }
 

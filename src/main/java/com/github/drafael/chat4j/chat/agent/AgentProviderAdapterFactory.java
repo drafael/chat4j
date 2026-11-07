@@ -87,6 +87,17 @@ public class AgentProviderAdapterFactory {
                     : new OpenAiCompatibleFallbackAgentAdapter(providerName, copilotAnthropicToolAdapter, providerServiceAdapter);
         }
 
+        if (supportsOpenAiResponsesToolAdapter(providerName, modelId, baseUrl)) {
+            return new OpenAiResponsesToolAgentAdapter(
+                    modelId,
+                    baseUrl,
+                    apiKey,
+                    agentSystemPromptAppend,
+                    attachmentSupport,
+                    immutableDefinitions
+            );
+        }
+
         if (supportsOpenAiCompatibleToolAdapter(providerName, modelId, baseUrl, apiKey)) {
             AgentProviderAdapter openAiToolAdapter = new OpenAiToolAgentAdapter(
                     providerName,
@@ -112,6 +123,12 @@ public class AgentProviderAdapterFactory {
     private IllegalStateException unsupportedMcpPath(String providerName) {
         return new IllegalStateException("%s cannot advertise MCP tools for the selected model."
                 .formatted(StringUtils.defaultIfBlank(providerName, "This provider")));
+    }
+
+    private boolean supportsOpenAiResponsesToolAdapter(String providerName, String modelId, String baseUrl) {
+        return Strings.CI.equals(providerName, "OpenAI")
+                && StringUtils.isNotBlank(baseUrl)
+                && Strings.CS.equalsAny(modelId, "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna");
     }
 
     private boolean supportsOpenAiCompatibleToolAdapter(
