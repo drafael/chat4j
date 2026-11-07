@@ -86,6 +86,10 @@ Chat4J parses batch-capable STT models from the `stt` array, ignores non-STT fam
 
 Advanced Deepgram options such as smart formatting, diarization, language selection, punctuation, numerals, utterances, keywords, search/replace, alternatives, callbacks/webhooks, and live streaming are not exposed yet.
 
+## Groq model compatibility
+
+The retired `distil-whisper-large-v3-en` model is no longer bundled. Legacy requests to the canonical Groq transcription endpoint use the recommended `whisper-large-v3-turbo` replacement; explicitly selected model IDs on custom endpoints are unchanged. See [Groq model deprecations](https://console.groq.com/docs/deprecations).
+
 ## AssemblyAI credentials and models
 
 AssemblyAI Speech to Text requires `ASSEMBLYAI_API_KEY`, either saved in Chat4J's encrypted local token vault from Settings or supplied by the process/shell environment. A saved token takes precedence over environment variables.

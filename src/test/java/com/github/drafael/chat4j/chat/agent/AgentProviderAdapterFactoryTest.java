@@ -8,6 +8,8 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +28,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AgentProviderAdapterFactoryTest {
 
     private final AgentProviderAdapterFactory subject = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority());
+
+    @ParameterizedTest
+    @CsvSource({"OpenAI, gpt-5.5", "OpenRouter, gpt-6.1-terra", "xAI, gpt-6.1-sol"})
+    @DisplayName("Legacy OpenAI models and compatible providers retain their Chat Completions tool adapter")
+    void create_unaffectedProviderOrModel_preservesChatCompletions(String provider, String model) {
+        AgentProviderAdapter adapter = subject.create(
+                provider, model, "https://example.test/v1", "test-key", providerService(), ""
+        );
+
+        assertThat(adapter).isExactlyInstanceOf(OpenAiToolAgentAdapter.class);
+    }
 
     @Test
     @DisplayName("Codex provider falls back to provider service adapter when OAuth bearer token is missing")

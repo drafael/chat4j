@@ -17,6 +17,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -78,6 +80,21 @@ class TogetherModelCatalogClientTest {
         assertThat(exchange.getRequestURI().getRawQuery()).isNull();
         assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer secret");
         assertThat(exchange.getRequestHeaders().getFirst("Accept")).isEqualTo("application/json");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "meta-models/Muse-Spark-Open-816B-A42B", "MiniMaxAI/MiniMax-M3.1-Flash",
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL", "Qwen/Qwen3.8-Flash",
+            "reflection/Beam-1.0-501B-A23B", "together/Tev1-4B-experimental",
+            "zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash"
+    })
+    @DisplayName("New published Together chat models survive the exact serverless intersection")
+    void fetchModels_currentPublishedModel_isNotHidden(String model) {
+        responseBody = "[{\"id\":\"%s\",\"object\":\"model\",\"created\":1,\"type\":\"chat\"}]".formatted(model);
+        var subject = new TogetherModelCatalogClient();
+        assertThat(subject.fetchModels(runtime("test-key", baseUrl()))).containsExactly(model);
     }
 
     @Test

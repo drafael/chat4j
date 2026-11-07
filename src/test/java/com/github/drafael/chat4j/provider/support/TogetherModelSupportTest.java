@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.Set;
@@ -104,6 +105,24 @@ class TogetherModelSupportTest {
         assertThat(TogetherModelSupport.isServerlessChatModel("Qwen/new-model")).isFalse();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "meta-models/Muse-Spark-Open-816B-A42B", "MiniMaxAI/MiniMax-M3.1-Flash",
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL", "Qwen/Qwen3.8-Flash",
+            "reflection/Beam-1.0-501B-A23B", "together/Tev1-4B-experimental",
+            "zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash"
+    })
+    @DisplayName("Current serverless chat IDs are selectable without guessing new reasoning controls")
+    void isServerlessChatModel_currentCatalogModel_admitsChatWithoutUnreviewedControls(String model) {
+        assertThat(TogetherModelSupport.isServerlessChatModel(model)).isTrue();
+        assertThat(TogetherModelSupport.reasoningRequest(HOSTED_BASE_URL, model, ReasoningLevel.OFF))
+                .satisfies(request -> {
+                    assertThat(request.enabledPropertyPresent()).isFalse();
+                    assertThat(request.effort()).isNull();
+                });
+    }
+
     @Test
     @DisplayName("Capability snapshots expose only their reviewed serverless subsets")
     void capabilities_whenServerlessModelVaries_matchReviewedSubsets() {
@@ -118,6 +137,17 @@ class TogetherModelSupportTest {
             assertThat(TogetherModelSupport.supportsReasoning(HOSTED_BASE_URL, modelId))
                     .isEqualTo(REASONING_MODELS.contains(modelId));
         });
+    }
+
+    @Test
+    @DisplayName("The documented US Together endpoint retains reviewed model controls without changing the default host")
+    void capabilities_officialUsEndpoint_preservesReviewedKimiControls() {
+        String endpoint = "https://us-api.together.ai/v1/";
+        assertThat(TogetherModelSupport.isHostedEndpoint(endpoint)).isTrue();
+        assertThat(TogetherModelSupport.supportsVision(endpoint, "moonshotai/Kimi-K3")).isTrue();
+        assertThat(TogetherModelSupport.supportsTools(endpoint, "moonshotai/Kimi-K3")).isTrue();
+        assertThat(TogetherModelSupport.reasoningRequest(endpoint, "moonshotai/Kimi-K3", ReasoningLevel.LOW).effort())
+                .isEqualTo("low");
     }
 
     @Test

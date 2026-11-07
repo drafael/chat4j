@@ -97,6 +97,11 @@ class AnthropicChatCompletionClientTest {
 
     @ParameterizedTest
     @CsvSource({
+            "claude-haiku-5-5, MEDIUM, medium, 6144",
+            "claude-haiku-5-5, EXTRA_HIGH, xhigh, 12288",
+            "claude-haiku-5-5, MAX, max, 12288",
+            "claude-mythos-5, HIGH, high, 8192",
+            "claude-mythos-5-1, MAX, max, 12288",
             "claude-sonnet-5-5, MEDIUM, medium, 6144",
             "claude-sonnet-5-5, HIGH, high, 8192",
             "claude-opus-5-5, MEDIUM, medium, 6144",
@@ -162,6 +167,9 @@ class AnthropicChatCompletionClientTest {
 
     @ParameterizedTest
     @CsvSource({
+            "claude-haiku-5-5, disabled,",
+            "claude-mythos-5, adaptive, omitted",
+            "claude-mythos-5-1, adaptive, omitted",
             "claude-sonnet-5-5, between_tools,",
             "claude-opus-5-5, adaptive, omitted",
             "claude-fable-5, adaptive, omitted",

@@ -1088,6 +1088,8 @@ class OpenAiChatCompletionClientTest {
     @ParameterizedTest
     @CsvSource({
             "OpenAI, gpt-5.5, OFF, none",
+            "OpenAI, gpt-6.1-terra, OFF, none",
+            "OpenAI, gpt-6.1-terra, MAX, max",
             "OpenAI, gpt-5, MINIMAL, minimal",
             "Google AI, gemini-2.5-flash, OFF, none",
             "Google AI, gemini-3.8-flash, HIGH, high",
@@ -1401,11 +1403,24 @@ class OpenAiChatCompletionClientTest {
         assertThat(tokens).containsExactly("thinking");
     }
 
-    @Test
-    @DisplayName("Mistral streaming thinking chunks remain separate from answer text")
-    void streamCompletion_mistralChunkedContent_emitsThinkingAndAnswer() throws Exception {
-        Map<?, ?> request = captureCompatibleRequest("Mistral", "mistral-small-latest", ReasoningLevel.HIGH);
-        assertThat(request.get("reasoning_effort")).isEqualTo("high");
+    @ParameterizedTest
+    @CsvSource({
+            "mistral-small-latest, HIGH, high",
+            "mistral-small-latest, OFF, none",
+            "mistral-large-4, LOW, low",
+            "mistral-large-4, MEDIUM, medium",
+            "mistral-large-4, HIGH, high",
+            "mistral-large-4-0, LOW, low",
+            "mistral-large-4-0, MEDIUM, medium",
+            "mistral-large-4-0, HIGH, high",
+            "zai-glm-5-3, MAX, max",
+            "zai-glm-5, MAX, max",
+            "zai-glm-latest, MAX, max"
+    })
+    @DisplayName("Mistral preserves model effort and separates chunked thinking from the plain-text answer")
+    void streamCompletion_mistralChunkedContent_emitsThinkingAndAnswer(String model, ReasoningLevel level, String effort) throws Exception {
+        Map<?, ?> request = captureCompatibleRequest("Mistral", model, level);
+        assertThat(request.get("reasoning_effort")).isEqualTo(effort);
     }
 
     @ParameterizedTest
@@ -1418,14 +1433,29 @@ class OpenAiChatCompletionClientTest {
         assertThat(request.get("think")).isNull();
     }
 
-    @Test
+    @ParameterizedTest
+    @CsvSource({"gpt-5.5", "gpt-6.1-terra"})
     @DisplayName("OpenAI Responses explicitly disables reasoning on models that default to thinking")
-    void createResponsesParams_supportedOff_sendsNoneWithoutSummary() {
-        var params = subject.createResponsesParams(runtime("OpenAI", "gpt-5.5", "http://127.0.0.1:1/v1"), emptyList(), ReasoningLevel.OFF, false);
+    void createResponsesParams_supportedOff_sendsNoneWithoutSummary(String model) {
+        var params = subject.createResponsesParams(runtime("OpenAI", model, "http://127.0.0.1:1/v1"), emptyList(), ReasoningLevel.OFF, false);
         assertThat(params.reasoning()).hasValueSatisfying(reasoning -> {
             assertThat(reasoning.effort()).contains(ReasoningEffort.NONE);
             assertThat(reasoning.summary()).isEmpty();
         });
+    }
+
+    @Test
+    @DisplayName("Terra Max is preserved on the Responses API rather than downgraded")
+    void createResponsesParams_terraMax_preservesEffort() {
+        var params = subject.createResponsesParams(
+                runtime("OpenAI", "gpt-6.1-terra", "http://127.0.0.1:1/v1"),
+                emptyList(),
+                ReasoningLevel.MAX,
+                false
+        );
+        assertThat(params.reasoning()).hasValueSatisfying(reasoning ->
+                assertThat(reasoning.effort()).contains(ReasoningEffort.of("max"))
+        );
     }
 
     private Map<?, ?> captureOpenRouterRequest(String model, ReasoningLevel level) throws Exception {
@@ -1437,15 +1467,24 @@ class OpenAiChatCompletionClientTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             capturedRequest.set(JsonCodec.standard().read(exchange.getRequestBody().readAllBytes(), Map.class));
-            String delta = provider.equals("Mistral")
-                    ? "\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"Checking the answer.\"}]},{\"type\":\"text\",\"text\":\"Answer\"}]"
-                    : "\"reasoning\":\"Checking the answer.\",\"content\":\"Answer\"";
-            byte[] body = """
-                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{%s},"finish_reason":"stop"}]}
+            String response = provider.equals("Mistral")
+                    ? """
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","p":"padding","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"Checking the answer."}]}]},"finish_reason":null}]}
+
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[]},{"type":"text","text":"An"}]},"finish_reason":null}]}
+
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"content":"swer"},"finish_reason":"stop"}]}
 
                     data: [DONE]
 
-                    """.formatted(delta).getBytes(StandardCharsets.UTF_8);
+                    """
+                    : """
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"reasoning":"Checking the answer.","content":"Answer"},"finish_reason":"stop"}]}
+
+                    data: [DONE]
+
+                    """;
+            byte[] body = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -1484,7 +1523,7 @@ class OpenAiChatCompletionClientTest {
         } finally {
             server.stop(0);
         }
-        assertThat(tokens).containsExactly("Answer");
+        assertThat(String.join("", tokens)).isEqualTo("Answer");
         if (level.enabled()) {
             assertThat(thinking).containsExactly("Checking the answer.");
         } else {

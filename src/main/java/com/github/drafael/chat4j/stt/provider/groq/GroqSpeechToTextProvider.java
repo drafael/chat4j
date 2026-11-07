@@ -112,7 +112,7 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
                 "POST",
                 context.transcriptionUri(),
                 multipartHeaders(context, boundary),
-                multipartBody(boundary, request.audioFile(), request.modelId()),
+                multipartBody(boundary, request.audioFile(), modelForRequest(request.modelId(), context)),
                 context.timeout(),
                 TRANSCRIPTION_RESPONSE_LIMIT_BYTES
         );
@@ -135,6 +135,16 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
             throw new SpeechToTextException("No speech was recorded.");
         }
         return new SpeechToTextResult(text);
+    }
+
+    private String modelForRequest(String modelId, SpeechToTextProviderContext context) throws SpeechToTextException {
+        // Custom endpoints may still serve the retired hosted model ID.
+        if (Strings.CS.equals(modelId, "distil-whisper-large-v3-en")
+                && GroqSttEndpointResolver.resolve(GroqSttEndpointResolver.DEFAULT_BASE_URL)
+                        .transcriptionUri().equals(context.transcriptionUri())) {
+            return GroqSpeechToTextModels.DEFAULT_MODEL_ID;
+        }
+        return modelId;
     }
 
     private HttpBody multipartBody(String boundary, Path audioFile, String modelId) {

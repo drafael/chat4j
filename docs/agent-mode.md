@@ -68,7 +68,12 @@ Filesystem behavior is based on `java.nio.file` checks, normalization, and real-
 Adapter factory: `AgentProviderAdapterFactory`
 
 - **Anthropic**: native tool adapter (`AnthropicToolAgentAdapter`).
-- **OpenAI-compatible providers**: `OpenAiToolAgentAdapter`.
+- **OpenAI GPT-6.1 Sol/Terra and GPT-6 Sol/Luna**: `OpenAiResponsesToolAgentAdapter` against `/responses` at the configured OpenAI base URL.
+  - Supports local and MCP function tools with the existing workspace confinement and MCP approval flow.
+  - Replays opaque reasoning, assistant phase, function calls, and results within the current agent run using `store: false`; continuation state is not persisted between user turns.
+  - Uses non-streaming tool turns and the existing cancellable HTTP transport. Incomplete/failed responses cannot dispatch tools or report success. No automatic endpoint fallback or retry is performed.
+  - This does not add provider-hosted MCP or native image/file attachment transmission.
+- **Other OpenAI models and OpenAI-compatible providers**: `OpenAiToolAgentAdapter`.
   - Preserves provider reasoning fields such as DeepSeek `reasoning_content` across tool-result turns when required by the API.
   - Together's direct Agent path sends attachment metadata labels, not image or file contents. Chat4J adds an attachment notice to new user turns and a transient notice during regeneration when current post-truncation history contains attachments. This limitation does not apply universally to Codex or provider-service fallback paths.
 - **OpenAI Codex**: direct provider-service/Codex CLI path (`ProviderServiceAgentAdapter`).

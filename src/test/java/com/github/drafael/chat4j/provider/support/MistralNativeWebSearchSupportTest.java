@@ -2,17 +2,20 @@ package com.github.drafael.chat4j.provider.support;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class MistralNativeWebSearchSupportTest {
 
-    @Test
-    @DisplayName("Official Mistral endpoints and chat models support native search")
-    void supports_whenRuntimeIsOfficialChatModel_returnsTrue() {
+    @ParameterizedTest
+    @ValueSource(strings = {"mistral-small-latest", "mistral-large-4", "mistral-large-4-0"})
+    @DisplayName("Official Mistral endpoints and connector-capable models support native search")
+    void supports_whenRuntimeIsOfficialChatModel_returnsTrue(String model) {
         assertThat(MistralNativeWebSearchSupport.supports(
                 "Mistral",
-                "mistral-small-latest",
+                model,
                 "https://api.mistral.ai/v1/"
         )).isTrue();
         assertThat(MistralNativeWebSearchSupport.conversationsUri("https://api.mistral.ai"))

@@ -14,6 +14,7 @@ class ClaudeReasoningSupportTest {
     @ParameterizedTest
     @CsvSource({
             "claude-sonnet-4-6, MEDIUM", "anthropic/claude-sonnet-4.6:batch, MEDIUM",
+            "claude-haiku-5-5, MEDIUM", "anthropic/claude-haiku-5.5:batch, MEDIUM",
             "claude-opus-5-5, MEDIUM", "claude-sonnet-5-5, HIGH", "claude-opus-4-6, HIGH",
             "claude-opus-4-8, HIGH", "claude-fable-5-1, HIGH", "claude-3-7-sonnet, MEDIUM"
     })
@@ -31,7 +32,7 @@ class ClaudeReasoningSupportTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5", "claude-opus-5", "claude-sonnet-5-5"})
+    @ValueSource(strings = {"claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5"})
     @DisplayName("Optional adaptive thinking offers Off through Max without Ultra")
     void availableLevels_whenThinkingIsOptional_offersDistinctEfforts(String modelId) {
         assertThat(ClaudeReasoningSupport.usesAdaptiveThinking(modelId)).isTrue();
@@ -41,7 +42,7 @@ class ClaudeReasoningSupportTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"claude-opus-5-5", "claude-fable-5", "claude-fable-5-1"})
+    @ValueSource(strings = {"claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1"})
     @DisplayName("Mandatory Claude thinking does not offer Off or Ultra")
     void availableLevels_whenThinkingIsMandatory_omitsOff(String modelId) {
         assertThat(ClaudeReasoningSupport.availableLevels(modelId, false))

@@ -19,6 +19,8 @@ Fast requests return a buffered answer with `store:false`. Deeper research uses 
 
 ## Supported native transports
 
+Groq retired `groq/compound` and `groq/compound-mini` on September 21, 2026, without a listed replacement. Their row below describes legacy routing, not a currently available hosted search service; refresh old catalogs rather than treating a cached Compound selection as usable.
+
 | Provider/runtime | Search behavior | Source metadata |
 | --- | --- | --- |
 | Anthropic Claude | Optional native web-search tool | Claim-linked citation deltas |
@@ -31,7 +33,7 @@ Fast requests return a buffered answer with `store:false`. Deeper research uses 
 | OpenAI search-preview models | Required legacy Chat Completions route | Provider response citations |
 | xAI Grok | Optional Responses web search | URL citation annotations |
 | Google Gemini | Optional native `google_search` grounding | Grounding citations |
-| Groq Compound | Required model-semantic search | Search-result citation metadata when supplied |
+| Legacy Groq Compound (hosted models retired) | Historical required model-semantic search | Search-result citation metadata when supplied |
 | OpenRouter `openai/*` models on the official endpoint | Optional `openrouter:web_search` Chat Completions server tool | Claim-linked URL citation annotations when supplied |
 | OpenRouter `:online` / namespaced Sonar | Required model-semantic search | URL annotations when supplied |
 | Perplexity Agent API research efforts | Required standalone-provider search | ID-linked citations and typed search results |
@@ -40,7 +42,9 @@ DeepSeek search-enabled requests keep the Anthropic-compatible native search rou
 
 DeepSeek introduced standalone `POST /v1/tools/search` and `POST /v1/tools/fetch` endpoints on October 17, 2026. These return structured search results and page Markdown, respectively; Chat4J does not call them directly or use them as a fallback. According to the [Search & Fetch billing guide](https://api-docs.deepseek.com/guides/search/#billing), each costs $0.75 per 1,000 successful requests that produce results; failed requests, empty search results, and timeouts are not billed. Existing server-side search tool calls also use these APIs. DeepSeek states that per-request billing for those calls starts at 00:00 Beijing time on November 1, 2026; search summarization can also incur additional model-token charges.
 
-Mistral search-enabled requests use the stateless Conversations API with `store:false` and the standard `web_search` tool. Ordinary Mistral chat continues through Chat Completions. Chat4J does not request `web_search_premium`, and custom Mistral endpoints do not inherit hosted Conversations search. Only the connector-capable Mistral Small, Medium, and Large families advertise Web Search. Specialized families that the hosted API rejects for built-in connectors—including Codestral, Devstral, Ministral, Leanstral, and Mistral Code—remain available for ordinary chat but do not advertise Web Search. Conversations accepts only `user` and `assistant` inputs, so leading system messages are sent through its top-level `instructions` field; a later system message is rejected rather than reordered. Mistral does not expose the search query text, so Chat4J does not invent a **Searched** entry from the user prompt. The current API accepts reasoning effort `none` or `high`; Chat4J maps disabled reasoning to `none` and enabled levels to `high` on this route.
+Mistral search-enabled requests use the stateless Conversations API with `store:false` and the standard `web_search` tool. Ordinary Mistral chat continues through Chat Completions. Chat4J does not request `web_search_premium`, and custom Mistral endpoints do not inherit hosted Conversations search. Chat4J advertises Web Search for the reviewed Mistral Small, Medium, and Large families. Other families, including Codestral, Devstral, Ministral, Leanstral, and Mistral Code, remain available for ordinary chat but do not advertise Web Search; discovery of a new model does not automatically grant it Conversations search support. Conversations accepts only `user` and `assistant` inputs, so leading system messages are sent through its top-level `instructions` field; a later system message is rejected rather than reordered. Mistral does not expose the search query text, so Chat4J does not invent a **Searched** entry from the user prompt.
+
+Mistral Small and Medium use reasoning effort `none` or `high`; Chat4J maps disabled reasoning to `none` and enabled levels to `high` on those routes. Mistral Large 4 (`mistral-large-4` and `mistral-large-4-0`) instead supports Low, Medium, and High, with High as the recommended default. Its search requests preserve the selected effort; a legacy Off value maps to `low`, the replacement for the preview's former `none` value.
 
 Codex subprocesses always receive an explicit search mode. Enabled turns use `web_search="live"`; disabled turns use `web_search="disabled"`, overriding cached or user-level Codex defaults. App-server-to-exec fallback preserves that mode, selected reasoning effort, and the admitted Chat4J account through an isolated temporary `CODEX_HOME`. The Web Search activity records only query actions actually emitted by Codex; enabling the tool alone is not displayed as a completed search. Codex may search without exposing an opened page URL, so **Sources consulted** can remain empty after an observed search. Chat4J never promotes final Markdown links into citations.
 
@@ -69,6 +73,7 @@ Native search activity, citations, consulted sources, attachments, cancellation,
 - DeepSeek model and API changes: https://api-docs.deepseek.com/updates/
 - Mistral web search: https://docs.mistral.ai/studio/agents/agent-tools/websearch
 - Mistral Conversations API: https://docs.mistral.ai/api/endpoint/beta/conversations
+- Mistral model-specific reasoning: https://docs.mistral.ai/studio/conversations/reasoning
 - OpenAI Codex configuration: https://developers.openai.com/codex/config-reference
 - OpenAI Codex app-server: https://developers.openai.com/codex/app-server
 - Google grounding with Search: https://ai.google.dev/gemini-api/docs/interactions/google-search
