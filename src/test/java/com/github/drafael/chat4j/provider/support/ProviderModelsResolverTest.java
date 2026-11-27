@@ -97,7 +97,7 @@ class ProviderModelsResolverTest {
         Map<String, List<String>> modelsByProvider = subject.resolve(List.of(provider));
 
         assertThat(modelsByProvider.get("Perplexity")).containsExactly(
-                "fast", "low", "medium", "high"
+                "fast", "low", "medium", "high", "xhigh", "ultra"
         );
     }
 

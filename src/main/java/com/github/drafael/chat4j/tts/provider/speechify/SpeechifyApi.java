@@ -18,7 +18,11 @@ final class SpeechifyApi {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record VoicesResponse(List<Voice> voices) {
+    record VoicesResponse(
+            List<Voice> voices,
+            @JsonProperty("next_cursor") String nextCursor,
+            @JsonProperty("has_more") boolean hasMore
+    ) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -8,7 +8,7 @@ import java.util.Set;
 
 public final class PerplexityModelIds {
 
-    public static final List<String> AGENT_EFFORTS = List.of("fast", "low", "medium", "high");
+    public static final List<String> AGENT_EFFORTS = List.of("fast", "low", "medium", "high", "xhigh", "ultra");
 
     public static final List<String> SONAR_MODELS = List.of(
             "sonar",
@@ -29,6 +29,8 @@ public final class PerplexityModelIds {
             case "sonar-reasoning-pro", "low" -> "low";
             case "medium" -> "medium";
             case "sonar-deep-research", "high" -> "high";
+            case "xhigh" -> "xhigh";
+            case "ultra" -> "ultra";
             default -> throw new IllegalArgumentException("Unsupported Perplexity research selection: %s".formatted(selection));
         };
     }
@@ -39,7 +41,7 @@ public final class PerplexityModelIds {
 
     public static boolean isReasoningAgentOption(String selection) {
         return isReasoningSonarModel(selection)
-                || Set.of("low", "medium", "high").contains(normalizeDirectModelId(selection));
+                || Set.of("low", "medium", "high", "xhigh", "ultra").contains(normalizeDirectModelId(selection));
     }
 
     public static boolean isSonarModel(String modelId) {

@@ -128,7 +128,9 @@ public class AgentProviderAdapterFactory {
     private boolean supportsOpenAiResponsesToolAdapter(String providerName, String modelId, String baseUrl) {
         return Strings.CI.equals(providerName, "OpenAI")
                 && StringUtils.isNotBlank(baseUrl)
-                && Strings.CS.equalsAny(modelId, "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna");
+                && Strings.CS.equalsAny(modelId,
+                        "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna",
+                        "gpt-6.2-astra", "gpt-6.2-sol");
     }
 
     private boolean supportsOpenAiCompatibleToolAdapter(

@@ -30,13 +30,21 @@ Supported providers:
 | Groq | `GROQ_API_KEY` | WAV | Uses Orpheus models, Hannah as the default English voice, model-scoped English/Arabic voice lists, 200-character chunking, and WAV RIFF normalization during playback. |
 | ElevenLabs | `ELEVENLABS_API_KEY` | MP3 | Uses ElevenLabs model/voice catalogs when available and stores selected voice IDs separately from labels. |
 | ListenHub | `LISTENHUB_API_KEY` | MP3 | Uses the fixed ListenHub TTS model, Mia as the bundled fallback, and live public/private voice discovery. Read Aloud uses 1,000-character operational chunks below ListenHub's 20,000-character upstream ceiling. |
-| Speechify | `SPEECHIFY_API_KEY` | MP3 | Uses Speechify's live `/v1/audio/models` and `/v1/voices` catalogs. Simba 3.0 and Geffen are safe bundled defaults when catalogs are unavailable; Simba 3.2 is also bundled for English. Read Aloud chunks at the documented 2,000-character `/v1/audio/speech` limit. |
+| Speechify | `SPEECHIFY_API_KEY` | MP3 | Uses Speechify's live `/v1/audio/models` and `/v1/voices` catalogs. Simba 3.0 and Geffen remain bundled defaults when catalogs are unavailable; Simba 3.2 is also bundled for English and Simba 3.5 for explicit opt-in. Read Aloud chunks at the documented 2,000-character `/v1/audio/speech` limit. |
 
 Provider availability must use `CredentialResolver`, not direct `System.getenv`, so macOS shell-environment loading continues to work. System provider subprocesses also use the merged shell environment so packaged desktop launches can find tools such as `espeak-ng` on the user's PATH.
+
+### ElevenLabs voice discovery
+
+Voice discovery uses cursor-paginated `GET /v2/voices` with `page_size=100`. The old `/v1/voices` endpoint stops working when a workspace exceeds 500 voices, according to ElevenLabs' [public OpenAPI](https://api.elevenlabs.io/openapi.json). Discovery follows `has_more` and `next_page_token`, rejects incomplete or failed pagination, and preserves the prior cached catalog when refresh fails. Models, synthesis, voice IDs, and defaults are unchanged.
 
 ### Speechify API contract
 
 The integration follows Speechify's public Build API reference at `https://docs.speechify.ai/build/api-reference/`: Bearer authentication against `https://api.speechify.ai`, `GET /v1/audio/models`, `GET /v1/voices`, and `POST /v1/audio/speech`. Synthesis sends `input`, `voice_id`, explicit `audio_format: "mp3"`, and `model`. The successful response is JSON rather than raw audio: Chat4J validates `audio_format`, strictly Base64-decodes `audio_data`, then hands MP3 bytes to the shared playback service. Invalid JSON, Base64, empty audio, unexpected formats, and non-2xx responses become concise errors without exposing credentials or response bodies.
+
+Voice discovery follows `next_cursor` while `has_more` is true, including short or empty intermediate pages. Missing/repeated cursors or a failed later page reject the refresh instead of returning a partial voice catalog. Older unpaginated responses remain supported. See [List Voices](https://docs.speechify.ai/build/api-reference/v1/voices/get).
+
+Simba 3.5 is a selectable bundled model, not an automatic replacement for saved selections or the Simba 3.0 default. Model pricing differs; review [Speechify's migration guide](https://docs.speechify.ai/build/migrating-off-simba-1-6) before changing models.
 
 ## Settings
 

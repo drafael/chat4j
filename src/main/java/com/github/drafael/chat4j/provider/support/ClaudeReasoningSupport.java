@@ -10,14 +10,14 @@ import java.util.Set;
 
 import static java.util.Collections.emptyMap;
 
-/** Claude thinking controls; Haiku 5.5 and Mythos model IDs reviewed against Anthropic docs on 2026-11-02. */
+/** Claude thinking controls; Fable/Mythos 5.2 reviewed against Anthropic docs on 2026-11-27. */
 public final class ClaudeReasoningSupport {
 
     private static final Set<String> ADAPTIVE_MODELS = Set.of(
             "claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
             "claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5",
             "claude-fable-5", "claude-fable-5-1", "claude-haiku-5-5",
-            "claude-mythos-5", "claude-mythos-5-1"
+            "claude-mythos-5", "claude-mythos-5-1", "claude-fable-5-2", "claude-mythos-5-2"
     );
 
     private ClaudeReasoningSupport() {
@@ -38,7 +38,8 @@ public final class ClaudeReasoningSupport {
             case "claude-sonnet-5-5" -> AnthropicOffMode.BETWEEN_TOOLS;
             case "claude-sonnet-5", "claude-opus-5", "claude-haiku-5-5" -> AnthropicOffMode.DISABLED;
             case "claude-opus-5-5", "claude-fable-5", "claude-fable-5-1",
-                 "claude-mythos-5", "claude-mythos-5-1" -> AnthropicOffMode.OMITTED_DISPLAY;
+                 "claude-mythos-5", "claude-mythos-5-1",
+                 "claude-fable-5-2", "claude-mythos-5-2" -> AnthropicOffMode.OMITTED_DISPLAY;
             default -> AnthropicOffMode.OMIT_CONFIGURATION;
         };
     }

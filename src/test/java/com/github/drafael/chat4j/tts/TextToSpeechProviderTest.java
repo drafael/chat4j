@@ -24,10 +24,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static com.github.drafael.chat4j.tts.provider.TtsJsonTestSupport.read;
 import static java.util.Collections.emptyMap;
@@ -85,6 +88,67 @@ class TextToSpeechProviderTest {
         assertThat(models).extracting(TextToSpeechCatalogItem::id).containsExactly("eleven_flash_v2_5");
         assertThat(voices).extracting(TextToSpeechCatalogItem::id).containsExactly("voice-1");
         assertThat(voices.getFirst().description()).isEqualTo("Warm");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs voice discovery uses V2 and collects every cursor page")
+    void fetchVoices_whenCatalogIsPaginated_collectsAllV2Pages() throws Exception {
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var requests = new ArrayList<HttpExchangeRequest>();
+        var subject = elevenLabsProvider((request, cancellation) -> {
+            requests.add(request);
+            return json(switch (requests.size()) {
+                case 1 -> """
+                        {"voices":[{"voice_id":"first","name":"First"}],
+                         "has_more":true,"next_page_token":"next +/="}
+                        """;
+                case 2 -> """
+                        {"voices":[],"has_more":true,"next_page_token":"last"}
+                        """;
+                default -> """
+                        {"voices":[{"voice_id":"last","name":"Last"}],"has_more":false}
+                        """;
+            });
+        }, credentialResolver);
+
+        assertThat(subject.fetchVoices()).extracting(TextToSpeechCatalogItem::id).containsExactly("first", "last");
+        assertThat(requests).extracting(request -> request.uri().toString()).containsExactly(
+                "https://api.elevenlabs.io/v2/voices?page_size=100",
+                "https://api.elevenlabs.io/v2/voices?page_size=100&next_page_token=next+%2B%2F%3D",
+                "https://api.elevenlabs.io/v2/voices?page_size=100&next_page_token=last"
+        );
+        assertThat(requests).allSatisfy(request -> assertThat(request.headers()).containsEntry("xi-api-key", "test-key"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "\"\"", "\"repeat\""})
+    @DisplayName("ElevenLabs rejects missing or repeated continuation tokens without publishing a partial catalog")
+    void fetchVoices_whenPaginationIsInvalid_throws(String cursorJson) {
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = elevenLabsProvider((request, cancellation) -> json("""
+                {"voices":[{"voice_id":"partial"}],"has_more":true,"next_page_token":%s}
+                """.formatted(cursorJson)), credentialResolver);
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pagination");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs propagates a later voice page failure instead of returning partial voices")
+    void fetchVoices_whenLaterPageFails_throws() {
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var requests = new AtomicInteger();
+        var subject = elevenLabsProvider((request, cancellation) -> requests.incrementAndGet() == 1
+                ? json("""
+                        {"voices":[{"voice_id":"partial"}],"has_more":true,"next_page_token":"next"}
+                        """)
+                : new HttpExchangeResponse(503, emptyMap(), new byte[0]), credentialResolver);
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("503");
+        assertThat(requests).hasValue(2);
     }
 
     @Test

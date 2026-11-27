@@ -33,7 +33,11 @@ final class ElevenLabsApi {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record VoicesResponse(List<Voice> voices) {
+    record VoicesResponse(
+            List<Voice> voices,
+            @JsonProperty("next_page_token") String nextPageToken,
+            @JsonProperty("has_more") boolean hasMore
+    ) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -40,6 +40,8 @@ class CodexLocalModelCacheTest {
         var subject = CodexLocalModelCache.builtinSnapshot();
         assertThat(subject.reasoningOptions("gpt-6-astra").orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.LOW);
         assertThat(subject.reasoningOptions("gpt-6.1-sol").orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.LOW);
+        List.of("gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra").forEach(model ->
+                assertThat(subject.reasoningOptions(model).orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.LOW));
         assertThat(subject.reasoningOptions("gpt-6-luna").orElseThrow().defaultLevel()).isEqualTo(ReasoningLevel.MEDIUM);
         assertThat(subject.reasoningOptions("gpt-6-astra").orElseThrow().select(ReasoningLevel.HIGH)).isEqualTo(ReasoningLevel.HIGH);
     }
@@ -124,6 +126,7 @@ class CodexLocalModelCacheTest {
 
         assertThat(snapshot.loadedSuccessfully()).isTrue();
         assertThat(snapshot.models()).containsExactlyInAnyOrder(
+                "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra",
                 "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
                 "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"
         );
@@ -142,7 +145,8 @@ class CodexLocalModelCacheTest {
                 ReasoningLevel.MAX,
                 ReasoningLevel.ULTRA
         );
-        List.of("gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-terra").forEach(model ->
+        List.of("gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra",
+                "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-terra").forEach(model ->
                 assertThat(snapshot.reasoningLevelsByModel().get(model))
                         .as("Supported efforts for %s", model)
                         .isEqualTo(snapshot.reasoningLevelsByModel().get("gpt-5.6-sol")));

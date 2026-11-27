@@ -152,7 +152,7 @@ public final class ProviderCapabilityResolver {
                      "mistral-medium-2604" -> Optional.of(ReasoningOptions.of(List.of(ReasoningLevel.OFF, ReasoningLevel.HIGH), ReasoningLevel.HIGH));
                 case "mistral-large-4", "mistral-large-4-0" -> Optional.of(ReasoningOptions.of(List.of(
                         ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH), ReasoningLevel.HIGH));
-                case "zai-glm-5-3", "zai-glm-5", "zai-glm-latest" -> Optional.of(ReasoningOptions.of(List.of(
+                case "zai-glm-5-3", "zai-glm-5-3-flash", "zai-glm-5", "zai-glm-latest" -> Optional.of(ReasoningOptions.of(List.of(
                         ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX), ReasoningLevel.HIGH));
                 default -> Optional.empty();
             };
@@ -193,7 +193,7 @@ public final class ProviderCapabilityResolver {
             case "gpt-5.5" -> ReasoningOptions.of(ReasoningLevel.standardLevels());
             case "gpt-6-sol", "gpt-6-luna", "gpt-6.1-terra" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX));
-            case "gpt-6-astra", "gpt-6.1-sol" -> ReasoningOptions.of(List.of(
+            case "gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX
             ));
             default -> null;

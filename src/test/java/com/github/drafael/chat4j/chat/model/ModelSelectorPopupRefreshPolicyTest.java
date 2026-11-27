@@ -37,7 +37,7 @@ class ModelSelectorPopupRefreshPolicyTest {
         );
 
         assertThat(models).containsExactly(
-                "fast", "low", "medium", "high"
+                "fast", "low", "medium", "high", "xhigh", "ultra"
         );
     }
 

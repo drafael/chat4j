@@ -16,7 +16,8 @@ class ClaudeReasoningSupportTest {
             "claude-sonnet-4-6, MEDIUM", "anthropic/claude-sonnet-4.6:batch, MEDIUM",
             "claude-haiku-5-5, MEDIUM", "anthropic/claude-haiku-5.5:batch, MEDIUM",
             "claude-opus-5-5, MEDIUM", "claude-sonnet-5-5, HIGH", "claude-opus-4-6, HIGH",
-            "claude-opus-4-8, HIGH", "claude-fable-5-1, HIGH", "claude-3-7-sonnet, MEDIUM"
+            "claude-opus-4-8, HIGH", "claude-fable-5-1, HIGH", "claude-3-7-sonnet, MEDIUM",
+            "claude-fable-5-2, HIGH", "claude-mythos-5-2, HIGH"
     })
     @DisplayName("Claude defaults follow general-purpose recommendations without changing legacy budget controls")
     void recommendedLevel_knownModel_usesDocumentedRecommendation(String model, ReasoningLevel expected) {
@@ -42,7 +43,8 @@ class ClaudeReasoningSupportTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1"})
+    @ValueSource(strings = {"claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
+            "claude-fable-5-2", "claude-mythos-5-2", "anthropic/claude-fable-5.2:batch"})
     @DisplayName("Mandatory Claude thinking does not offer Off or Ultra")
     void availableLevels_whenThinkingIsMandatory_omitsOff(String modelId) {
         assertThat(ClaudeReasoningSupport.availableLevels(modelId, false))

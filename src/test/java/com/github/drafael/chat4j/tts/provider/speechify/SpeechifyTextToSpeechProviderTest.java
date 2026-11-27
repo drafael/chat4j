@@ -14,16 +14,19 @@ import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.http.HttpTransport;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static com.github.drafael.chat4j.tts.provider.TtsJsonTestSupport.read;
 import static java.util.Collections.emptyMap;
@@ -55,11 +58,88 @@ class SpeechifyTextToSpeechProviderTest {
         assertThat(subject.defaultModel().label()).isEqualTo("Simba 3.0");
         assertThat(subject.defaultVoice()).isEqualTo(TextToSpeechCatalogItem.of("geffen_32", "Geffen"));
         assertThat(subject.bundledModels()).extracting(TextToSpeechCatalogItem::id)
-                .containsExactly("simba-3.0", "simba-3.2");
+                .containsExactly("simba-3.0", "simba-3.2", "simba-3.5");
         assertThat(subject.bundledVoices()).containsExactly(subject.defaultVoice());
         assertThat(subject.maxInputCharacters()).isEqualTo(2_000);
         assertThat(subject.defaultResponseFormat()).isEqualTo("mp3");
         assertThat(subject.available()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Speechify voice discovery follows encoded cursors even through empty intermediate pages")
+    void fetchVoices_whenCatalogIsPaginated_collectsEveryPage() throws Exception {
+        var requests = new ArrayList<HttpExchangeRequest>();
+        var subject = provider((request, cancellation) -> {
+            requests.add(request);
+            return json(switch (requests.size()) {
+                case 1 -> """
+                        {"voices":[{"id":"first","display_name":"First"}],
+                         "has_more":true,"next_cursor":"next +/="}
+                        """;
+                case 2 -> """
+                        {"voices":[],"has_more":true,"next_cursor":"tail"}
+                        """;
+                default -> """
+                        {"voices":[{"id":"last","display_name":"Last"}],"has_more":false}
+                        """;
+            });
+        }, Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "catalog-key"));
+
+        assertThat(subject.fetchVoices()).extracting(TextToSpeechCatalogItem::id).containsExactly("first", "last");
+        assertThat(requests).extracting(request -> request.uri().toString()).containsExactly(
+                "https://api.speechify.ai/v1/voices",
+                "https://api.speechify.ai/v1/voices?cursor=next+%2B%2F%3D",
+                "https://api.speechify.ai/v1/voices?cursor=tail"
+        );
+        assertThat(requests).allSatisfy(request ->
+                assertThat(request.headers()).containsEntry("Authorization", "Bearer catalog-key"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "\"\"", "\" \""})
+    @DisplayName("Speechify refuses an incomplete paginated catalog instead of publishing only its first page")
+    void fetchVoices_whenMorePagesHaveNoCursor_throws(String cursorJson) {
+        var subject = provider((request, cancellation) -> json("""
+                {"voices":[{"id":"partial"}],"has_more":true,"next_cursor":%s}
+                """.formatted(cursorJson)), Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "catalog-key"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pagination");
+    }
+
+    @Test
+    @DisplayName("Speechify rejects repeated pagination cursors without looping or returning partial voices")
+    void fetchVoices_whenCursorRepeats_throws() {
+        var requests = new AtomicInteger();
+        var subject = provider((request, cancellation) -> {
+            requests.incrementAndGet();
+            return json("""
+                    {"voices":[{"id":"partial"}],"has_more":true,"next_cursor":"same"}
+                    """);
+        }, Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "catalog-key"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pagination");
+        assertThat(requests).hasValue(2);
+    }
+
+    @Test
+    @DisplayName("Speechify propagates a later page failure instead of returning a partial voice catalog")
+    void fetchVoices_whenLaterPageFails_throws() {
+        var requests = new AtomicInteger();
+        var subject = provider((request, cancellation) -> requests.incrementAndGet() == 1
+                ? json("""
+                        {"voices":[{"id":"partial"}],"has_more":true,"next_cursor":"next"}
+                        """)
+                : new HttpExchangeResponse(503, emptyMap(), new byte[0]),
+                Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "catalog-key"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("503");
+        assertThat(requests).hasValue(2);
     }
 
     @Test
@@ -158,9 +238,10 @@ class SpeechifyTextToSpeechProviderTest {
                 .hasMessageContaining("Speechify");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"simba-3.2", "simba-3.5"})
     @DisplayName("Speechify synthesis sends the documented request and decodes JSON Base64 MP3")
-    void synthesize_whenCalled_sendsOfficialRequestAndDecodesAudio() throws Exception {
+    void synthesize_whenCalled_sendsOfficialRequestAndDecodesAudio(String model) throws Exception {
         HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
         byte[] mp3 = {1, 2, 3, 4};
         var subject = provider((request, cancellation) -> {
@@ -171,7 +252,8 @@ class SpeechifyTextToSpeechProviderTest {
                     """.formatted(Base64.getEncoder().encodeToString(mp3)));
         }, emptyMap());
 
-        var audio = subject.synthesize(REQUEST, "request-key");
+        var request = new TextToSpeechRequest("speechify", model, "geffen_32", "Hello from Chat4J", "wav");
+        var audio = subject.synthesize(request, "request-key");
 
         assertThat(captured[0].method()).isEqualTo("POST");
         assertThat(captured[0].uri().toString()).isEqualTo("https://api.speechify.ai/v1/audio/speech");
@@ -184,7 +266,7 @@ class SpeechifyTextToSpeechProviderTest {
                 "Hello from Chat4J",
                 "geffen_32",
                 "mp3",
-                "simba-3.2"
+                model
         ));
         assertThat(audio.bytes()).containsExactly(mp3);
         assertThat(audio.contentType()).isEqualTo("audio/mpeg");

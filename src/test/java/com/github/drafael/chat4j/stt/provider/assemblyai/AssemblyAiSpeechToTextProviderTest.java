@@ -27,6 +27,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,7 +48,8 @@ class AssemblyAiSpeechToTextProviderTest {
         assertThat(subject.displayName()).isEqualTo("AssemblyAI");
         assertThat(subject.requiredEnvVar()).isEqualTo(AssemblyAiSpeechToTextProvider.ENV_VAR);
         assertThat(subject.defaultModel().id()).isEqualTo("assemblyai-auto");
-        assertThat(subject.bundledModels()).extracting("id").containsExactly("assemblyai-auto", "universal-3-5-pro", "universal-2");
+        assertThat(subject.defaultModel().label()).isEqualTo("AssemblyAI Automatic (provider default)");
+        assertThat(subject.bundledModels()).extracting("id").containsExactly("assemblyai-auto", "assemblyai-stt-3-7", "universal-3-5-pro", "universal-2");
     }
 
     @Test
@@ -66,7 +69,7 @@ class AssemblyAiSpeechToTextProviderTest {
 
         var models = subject.fetchModels(context(credentials(true)));
 
-        assertThat(models).extracting("id").containsExactly("assemblyai-auto", "universal-3-5-pro", "universal-2");
+        assertThat(models).extracting("id").containsExactly("assemblyai-auto", "assemblyai-stt-3-7", "universal-3-5-pro", "universal-2");
         assertThat(transport.requests).isEmpty();
     }
 
@@ -117,16 +120,17 @@ class AssemblyAiSpeechToTextProviderTest {
         assertThat(transport.requests.get(3).headers()).containsEntry("Authorization", "test-key");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"assemblyai-stt-3-7", "universal-3-5-pro", "universal-2"})
     @DisplayName("AssemblyAI transcription sends a one-item speech_models array for specific models")
-    void transcribe_whenSpecificModelSelected_sendsSingleSpeechModel() throws Exception {
+    void transcribe_whenSpecificModelSelected_sendsSingleSpeechModel(String model) throws Exception {
         Path audio = audioFile();
         var transport = successfulTransport("done");
         var subject = new AssemblyAiSpeechToTextProvider(transport);
 
-        subject.transcribe(request("universal-3-5-pro", audio, 1_000), context(credentials(true)));
+        subject.transcribe(request(model, audio, 1_000), context(credentials(true)));
 
-        assertThat(bodyText(transport.requests.get(1))).contains("\"speech_models\":[\"universal-3-5-pro\"]");
+        assertThat(bodyText(transport.requests.get(1))).contains("\"speech_models\":[\"%s\"]".formatted(model));
     }
 
     @Test

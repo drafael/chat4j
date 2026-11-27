@@ -21,7 +21,7 @@ class PerplexityModelCatalogClientTest {
         List<String> models = subject.fetchModels(runtime("http://127.0.0.1:1"));
 
         assertThat(models).containsExactly(
-                "fast", "low", "medium", "high"
+                "fast", "low", "medium", "high", "xhigh", "ultra"
         );
     }
 

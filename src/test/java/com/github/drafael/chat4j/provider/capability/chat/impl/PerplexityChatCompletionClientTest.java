@@ -88,7 +88,8 @@ class PerplexityChatCompletionClientTest {
     @ParameterizedTest
     @CsvSource({
             "sonar, fast", "sonar-pro, fast", "sonar-reasoning-pro, low", "sonar-deep-research, high",
-            "fast, fast", "low, low", "medium, medium", "high, high", " PERPLEXITY/SONAR-PRO , fast"
+            "fast, fast", "low, low", "medium, medium", "high, high", "xhigh, xhigh", "ultra, ultra",
+            " PERPLEXITY/SONAR-PRO , fast"
     })
     @DisplayName("Saved Sonar selections and research efforts use the Agent API without changing conversation history")
     void streamCompletion_supportedSelection_postsAgentEffortAndInput(String selection, String effort) throws Exception {

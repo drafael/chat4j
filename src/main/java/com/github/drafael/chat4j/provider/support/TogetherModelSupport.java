@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Hosted-serverless chat catalog refreshed on 2026-11-02; capability snapshots reviewed on 2026-08-15.
+ * Hosted-serverless chat catalog refreshed on 2026-11-27; capability snapshots reviewed on 2026-08-15.
  * Kimi K3 and DeepSeek V4 Pro 0813 reasoning controls updated on 2026-10-04.
  *
  * @see <a href="https://docs.together.ai/docs/serverless/models">Together serverless models</a>
@@ -67,7 +67,14 @@ public final class TogetherModelSupport {
             "reflection/Beam-1.0-501B-A23B",
             "together/Tev1-4B-experimental",
             "zai-org/GLM-5.3",
-            "zai-org/GLM-5.3-Flash"
+            "zai-org/GLM-5.3-Flash",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017-fast",
+            "elorian-labs/glimpse-1.0",
+            "moonshotai/Kimi-K3.1-Pro",
+            "Qwen/Qwen4-Max",
+            "ricursive-ai/Ripple-65B-Preview",
+            "tencent/Hy4",
+            "thinkingmachines/Inkling-2-Small"
     );
 
     private static final Set<String> VISION_MODELS = Set.of(

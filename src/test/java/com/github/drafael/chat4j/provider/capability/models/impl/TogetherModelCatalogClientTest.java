@@ -88,7 +88,10 @@ class TogetherModelCatalogClientTest {
             "meta-models/Muse-Spark-Open-816B-A42B", "MiniMaxAI/MiniMax-M3.1-Flash",
             "nvidia/NVIDIA-Nemotron-3.5-Super-VL", "Qwen/Qwen3.8-Flash",
             "reflection/Beam-1.0-501B-A23B", "together/Tev1-4B-experimental",
-            "zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash"
+            "zai-org/GLM-5.3", "zai-org/GLM-5.3-Flash",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017-fast", "elorian-labs/glimpse-1.0",
+            "moonshotai/Kimi-K3.1-Pro", "Qwen/Qwen4-Max", "ricursive-ai/Ripple-65B-Preview",
+            "tencent/Hy4", "thinkingmachines/Inkling-2-Small"
     })
     @DisplayName("New published Together chat models survive the exact serverless intersection")
     void fetchModels_currentPublishedModel_isNotHidden(String model) {

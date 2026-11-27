@@ -7,12 +7,16 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -32,10 +36,15 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
     private static final TextToSpeechCatalogItem RECOMMENDED_ENGLISH_MODEL = new TextToSpeechCatalogItem(
             "simba-3.2",
             "Simba 3.2",
-            "Speechify's recommended English model"
+            "Speechify's English-only model"
+    );
+    private static final TextToSpeechCatalogItem SIMBA_3_5_MODEL = new TextToSpeechCatalogItem(
+            "simba-3.5",
+            "Simba 3.5",
+            "Speechify's recommended model for 48 languages"
     );
     private static final TextToSpeechCatalogItem DEFAULT_VOICE = TextToSpeechCatalogItem.of("geffen_32", "Geffen");
-    private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL, RECOMMENDED_ENGLISH_MODEL);
+    private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL, RECOMMENDED_ENGLISH_MODEL, SIMBA_3_5_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
     public SpeechifyTextToSpeechProvider(@NonNull TtsHttpClient httpClient, @NonNull CredentialResolver credentialResolver) {
@@ -108,26 +117,41 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
 
     @Override
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
-        SpeechifyApi.VoicesResponse response = getJson(
-                URI.create("%s/voices".formatted(BASE_URL)),
-                authHeaders(apiKey()),
-                SpeechifyApi.VoicesResponse.class,
-                "Speechify voice catalog response was invalid."
-        );
-        List<SpeechifyApi.Voice> items = response.voices();
-        if (items == null) {
-            throw new IllegalStateException("Speechify voice catalog response was invalid.");
+        Map<String, String> headers = authHeaders(apiKey());
+        List<TextToSpeechCatalogItem> voices = new ArrayList<>();
+        Set<String> seenCursors = new HashSet<>();
+        String cursor = null;
+        while (true) {
+            String url = cursor == null
+                    ? "%s/voices".formatted(BASE_URL)
+                    : "%s/voices?cursor=%s".formatted(BASE_URL, URLEncoder.encode(cursor, StandardCharsets.UTF_8));
+            SpeechifyApi.VoicesResponse response = getJson(
+                    URI.create(url),
+                    headers,
+                    SpeechifyApi.VoicesResponse.class,
+                    "Speechify voice catalog response was invalid."
+            );
+            List<SpeechifyApi.Voice> items = response.voices();
+            if (items == null) {
+                throw new IllegalStateException("Speechify voice catalog response was invalid.");
+            }
+            List<TextToSpeechCatalogItem> page = items.stream()
+                    .filter(Objects::nonNull)
+                    .map(SpeechifyTextToSpeechProvider::voiceItem)
+                    .filter(Objects::nonNull)
+                    .toList();
+            if (!items.isEmpty() && page.isEmpty()) {
+                throw new IllegalStateException("Speechify voice catalog response did not contain valid voices.");
+            }
+            voices.addAll(page);
+            if (!response.hasMore()) {
+                return nonEmptyOrBundled(List.copyOf(voices), BUNDLED_VOICES);
+            }
+            cursor = response.nextCursor();
+            if (StringUtils.isBlank(cursor) || !seenCursors.add(cursor)) {
+                throw new IllegalStateException("Speechify voice catalog pagination was invalid.");
+            }
         }
-
-        List<TextToSpeechCatalogItem> voices = items.stream()
-                .filter(Objects::nonNull)
-                .map(SpeechifyTextToSpeechProvider::voiceItem)
-                .filter(Objects::nonNull)
-                .toList();
-        if (!items.isEmpty() && voices.isEmpty()) {
-            throw new IllegalStateException("Speechify voice catalog response did not contain valid voices.");
-        }
-        return nonEmptyOrBundled(voices, BUNDLED_VOICES);
     }
 
     @Override

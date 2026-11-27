@@ -35,6 +35,8 @@ class AnthropicToolAgentAdapterTest {
             "claude-haiku-5-5 | MAX | {\"type\":\"adaptive\",\"display\":\"summarized\"} | max | 12288",
             "claude-haiku-5-5 | OFF | {\"type\":\"disabled\"} | low | 4096",
             "claude-mythos-5-1 | HIGH | {\"type\":\"adaptive\",\"display\":\"summarized\"} | high | 8192",
+            "claude-fable-5-2 | HIGH | {\"type\":\"adaptive\",\"display\":\"summarized\"} | high | 8192",
+            "claude-mythos-5-2 | OFF | {\"type\":\"adaptive\",\"display\":\"omitted\"} | low | 4096",
             "claude-sonnet-4-6 | HIGH | {\"type\":\"adaptive\",\"display\":\"summarized\"} | high | 8192",
             "claude-sonnet-4-6 | OFF | null | null | 4096",
             "claude-sonnet-5-5 | OFF | {\"type\":\"between_tools\"} | low | 4096",

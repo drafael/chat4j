@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Route-specific contracts from OpenRouter's public model catalog, checked 2026-10-04.
+ * Route-specific contracts from OpenRouter's public model catalog, checked 2026-11-27.
  * @see <a href="https://openrouter.ai/api/v1/models">Public catalog including supported efforts and defaults</a>
  * @see <a href="https://openrouter.ai/docs/guides/best-practices/reasoning-tokens">Unified reasoning controls</a>
  */
@@ -29,7 +29,8 @@ public final class OpenRouterReasoningSupport {
             case "openai/gpt-5.2-pro", "openai/gpt-5.4-pro", "openai/gpt-5.5-pro" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH));
             case "openai/gpt-5-pro" -> ReasoningOptions.of(List.of(ReasoningLevel.HIGH));
-            case "openai/gpt-6-astra", "openai/gpt-6-astra-pro", "openai/gpt-6.1-sol", "openai/gpt-6.1-sol-pro" ->
+            case "openai/gpt-6-astra", "openai/gpt-6-astra-pro", "openai/gpt-6.1-sol", "openai/gpt-6.1-sol-pro",
+                 "openai/gpt-6.2-astra", "openai/gpt-6.2-astra-pro", "openai/gpt-6.2-sol", "openai/gpt-6.2-sol-pro" ->
                     ReasoningOptions.of(List.of(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH,
                             ReasoningLevel.EXTRA_HIGH, ReasoningLevel.MAX));
             case "openai/gpt-6-sol", "openai/gpt-6-sol-pro", "openai/gpt-6-luna", "openai/gpt-6-luna-pro",
@@ -48,7 +49,11 @@ public final class OpenRouterReasoningSupport {
                     ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH), ReasoningLevel.LOW);
             case "x-ai/grok-4.6", "x-ai/grok-4.7" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH), ReasoningLevel.HIGH);
-            case "google/gemini-3.8-flash", "google/gemini-3.7-flash", "google/gemini-3.1-pro-preview",
+            case "qwen/qwen4-max" -> ReasoningOptions.of(List.of(
+                    ReasoningLevel.OFF, ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH), ReasoningLevel.HIGH);
+            case "google/gemini-4-neon", "google/gemini-4-hydrogen" -> ReasoningOptions.of(List.of(
+                    ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.EXTRA_HIGH));
+            case "google/gemini-4-carbon", "google/gemini-3.8-flash", "google/gemini-3.7-flash", "google/gemini-3.1-pro-preview",
                  "google/gemini-3.1-pro-preview-customtools" -> ReasoningOptions.of(List.of(
                     ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH));
             case "google/gemini-3.6-flash", "google/gemini-3.5-flash", "google/gemini-3-flash-preview" ->

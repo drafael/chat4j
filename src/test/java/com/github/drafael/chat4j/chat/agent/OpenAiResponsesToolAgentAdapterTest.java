@@ -98,7 +98,8 @@ class OpenAiResponsesToolAgentAdapterTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"})
+    @ValueSource(strings = {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna",
+            "gpt-6-astra", "gpt-6.2-astra", "gpt-6.2-sol"})
     @DisplayName("Affected OpenAI models use Responses with flattened non-strict tools and stateless continuation")
     void executeTurn_affectedModel_usesResponses(String model) throws Exception {
         AgentProviderAdapter subject = adapter("OpenAI", model, baseUrl() + "/");

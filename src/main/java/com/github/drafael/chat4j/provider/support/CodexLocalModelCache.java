@@ -23,6 +23,7 @@ import java.util.Optional;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
+import static java.util.Map.entry;
 import static java.util.stream.Collectors.toMap;
 
 @Slf4j
@@ -30,9 +31,12 @@ public final class CodexLocalModelCache {
 
     private static final JsonCodec JSON = JsonCodec.standard();
     private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
-    // Visible models and efforts from the official Codex catalog, checked 2026-10-04:
+    // Visible models and efforts from the official Codex catalog, checked 2026-11-27:
     // https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json
     private static final List<String> BUILTIN_CODEX_MODELS = List.of(
+            "gpt-6.2-sol",
+            "gpt-6.2-astra",
+            "gpt-6.1-terra",
             "gpt-6-astra",
             "gpt-6.1-sol",
             "gpt-6-sol",
@@ -63,26 +67,32 @@ public final class CodexLocalModelCache {
             ReasoningLevel.MAX,
             ReasoningLevel.ULTRA
     );
-    private static final Map<String, List<ReasoningLevel>> BUILTIN_REASONING_LEVELS = Map.of(
-            "gpt-6-astra", ULTRA_REASONING_LEVELS,
-            "gpt-6.1-sol", ULTRA_REASONING_LEVELS,
-            "gpt-6-sol", ULTRA_REASONING_LEVELS,
-            "gpt-6-luna", MAX_REASONING_LEVELS,
-            "gpt-5.6-sol", ULTRA_REASONING_LEVELS,
-            "gpt-5.6-terra", ULTRA_REASONING_LEVELS,
-            "gpt-5.6-luna", MAX_REASONING_LEVELS,
-            "gpt-5.5", GPT_5_5_REASONING_LEVELS
+    private static final Map<String, List<ReasoningLevel>> BUILTIN_REASONING_LEVELS = Map.ofEntries(
+            entry("gpt-6.2-sol", ULTRA_REASONING_LEVELS),
+            entry("gpt-6.2-astra", ULTRA_REASONING_LEVELS),
+            entry("gpt-6.1-terra", ULTRA_REASONING_LEVELS),
+            entry("gpt-6-astra", ULTRA_REASONING_LEVELS),
+            entry("gpt-6.1-sol", ULTRA_REASONING_LEVELS),
+            entry("gpt-6-sol", ULTRA_REASONING_LEVELS),
+            entry("gpt-6-luna", MAX_REASONING_LEVELS),
+            entry("gpt-5.6-sol", ULTRA_REASONING_LEVELS),
+            entry("gpt-5.6-terra", ULTRA_REASONING_LEVELS),
+            entry("gpt-5.6-luna", MAX_REASONING_LEVELS),
+            entry("gpt-5.5", GPT_5_5_REASONING_LEVELS)
     );
 
-    private static final Map<String, ReasoningLevel> BUILTIN_DEFAULT_LEVELS = Map.of(
-            "gpt-6-astra", ReasoningLevel.LOW,
-            "gpt-6.1-sol", ReasoningLevel.LOW,
-            "gpt-6-sol", ReasoningLevel.MEDIUM,
-            "gpt-6-luna", ReasoningLevel.MEDIUM,
-            "gpt-5.6-sol", ReasoningLevel.LOW,
-            "gpt-5.6-terra", ReasoningLevel.MEDIUM,
-            "gpt-5.6-luna", ReasoningLevel.MEDIUM,
-            "gpt-5.5", ReasoningLevel.MEDIUM
+    private static final Map<String, ReasoningLevel> BUILTIN_DEFAULT_LEVELS = Map.ofEntries(
+            entry("gpt-6.2-sol", ReasoningLevel.LOW),
+            entry("gpt-6.2-astra", ReasoningLevel.LOW),
+            entry("gpt-6.1-terra", ReasoningLevel.LOW),
+            entry("gpt-6-astra", ReasoningLevel.LOW),
+            entry("gpt-6.1-sol", ReasoningLevel.LOW),
+            entry("gpt-6-sol", ReasoningLevel.MEDIUM),
+            entry("gpt-6-luna", ReasoningLevel.MEDIUM),
+            entry("gpt-5.6-sol", ReasoningLevel.LOW),
+            entry("gpt-5.6-terra", ReasoningLevel.MEDIUM),
+            entry("gpt-5.6-luna", ReasoningLevel.MEDIUM),
+            entry("gpt-5.5", ReasoningLevel.MEDIUM)
     );
 
     private CodexLocalModelCache() {

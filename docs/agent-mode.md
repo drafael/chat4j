@@ -68,7 +68,7 @@ Filesystem behavior is based on `java.nio.file` checks, normalization, and real-
 Adapter factory: `AgentProviderAdapterFactory`
 
 - **Anthropic**: native tool adapter (`AnthropicToolAgentAdapter`).
-- **OpenAI GPT-6.1 Sol/Terra and GPT-6 Sol/Luna**: `OpenAiResponsesToolAgentAdapter` against `/responses` at the configured OpenAI base URL.
+- **OpenAI GPT-6.2 Astra/Sol, GPT-6 Astra, GPT-6.1 Sol/Terra, and GPT-6 Sol/Luna**: `OpenAiResponsesToolAgentAdapter` against `/responses` at the configured OpenAI base URL.
   - Supports local and MCP function tools with the existing workspace confinement and MCP approval flow.
   - Replays opaque reasoning, assistant phase, function calls, and results within the current agent run using `store: false`; continuation state is not persisted between user turns.
   - Uses non-streaming tool turns and the existing cancellable HTTP transport. Incomplete/failed responses cannot dispatch tools or report success. No automatic endpoint fallback or retry is performed.

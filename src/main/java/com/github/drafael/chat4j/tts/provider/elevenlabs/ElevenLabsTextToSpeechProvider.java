@@ -10,10 +10,13 @@ import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
@@ -22,6 +25,7 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
     public static final String ID = "elevenlabs";
     public static final String ENV_VAR = "ELEVENLABS_API_KEY";
     private static final String BASE_URL = "https://api.elevenlabs.io";
+    private static final int VOICE_PAGE_SIZE = 100;
     private static final TextToSpeechCatalogItem DEFAULT_MODEL = TextToSpeechCatalogItem.of("eleven_flash_v2_5", "Eleven Flash v2.5");
     private static final TextToSpeechCatalogItem DEFAULT_VOICE = TextToSpeechCatalogItem.of("EXAVITQu4vr4xnSDxMaL", "Sarah");
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
@@ -92,25 +96,43 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
 
     @Override
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
-        ElevenLabsApi.VoicesResponse response = getJson(
-                URI.create("%s/v1/voices".formatted(BASE_URL)),
-                authHeaders(),
-                ElevenLabsApi.VoicesResponse.class,
-                "ElevenLabs voice catalog response was invalid."
-        );
-        List<ElevenLabsApi.Voice> voiceArray = response.voices();
-        if (voiceArray == null) {
-            throw new IllegalStateException("ElevenLabs voice catalog response was invalid.");
+        Map<String, String> headers = authHeaders();
+        List<TextToSpeechCatalogItem> voices = new ArrayList<>();
+        Set<String> seenTokens = new HashSet<>();
+        String nextToken = null;
+        while (true) {
+            // V1 stops working above 500 workspace voices; V2 provides cursor pagination.
+            String url = "%s/v2/voices?page_size=%d".formatted(BASE_URL, VOICE_PAGE_SIZE);
+            if (nextToken != null) {
+                url = "%s&next_page_token=%s".formatted(url, URLEncoder.encode(nextToken, StandardCharsets.UTF_8));
+            }
+            ElevenLabsApi.VoicesResponse response = getJson(
+                    URI.create(url),
+                    headers,
+                    ElevenLabsApi.VoicesResponse.class,
+                    "ElevenLabs voice catalog response was invalid."
+            );
+            List<ElevenLabsApi.Voice> items = response.voices();
+            if (items == null) {
+                throw new IllegalStateException("ElevenLabs voice catalog response was invalid.");
+            }
+            List<TextToSpeechCatalogItem> page = items.stream()
+                    .filter(Objects::nonNull)
+                    .map(ElevenLabsTextToSpeechProvider::voiceItem)
+                    .filter(Objects::nonNull)
+                    .toList();
+            if (!items.isEmpty() && page.isEmpty()) {
+                throw new IllegalStateException("ElevenLabs voice catalog response did not contain valid voices.");
+            }
+            voices.addAll(page);
+            if (!response.hasMore()) {
+                return nonEmptyOrBundled(List.copyOf(voices), BUNDLED_VOICES);
+            }
+            nextToken = response.nextPageToken();
+            if (StringUtils.isBlank(nextToken) || !seenTokens.add(nextToken)) {
+                throw new IllegalStateException("ElevenLabs voice catalog pagination was invalid.");
+            }
         }
-        List<TextToSpeechCatalogItem> voices = voiceArray.stream()
-                .filter(Objects::nonNull)
-                .map(ElevenLabsTextToSpeechProvider::voiceItem)
-                .filter(Objects::nonNull)
-                .toList();
-        if (!voiceArray.isEmpty() && voices.isEmpty()) {
-            throw new IllegalStateException("ElevenLabs voice catalog response did not contain valid voices.");
-        }
-        return nonEmptyOrBundled(voices, BUNDLED_VOICES);
     }
 
     @Override

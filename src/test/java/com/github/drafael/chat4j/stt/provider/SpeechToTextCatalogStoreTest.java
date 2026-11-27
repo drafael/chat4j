@@ -213,7 +213,7 @@ class SpeechToTextCatalogStoreTest {
         var models = subject.models(provider, SpeechToTextCatalogItem.of("selected-stale", "Selected Stale"));
 
         assertThat(models).extracting(SpeechToTextCatalogItem::id)
-                .containsExactly("assemblyai-auto", "universal-3-5-pro", "universal-2");
+                .containsExactly("assemblyai-auto", "assemblyai-stt-3-7", "universal-3-5-pro", "universal-2");
     }
 
     private SettingsRepository repo(String fileName) {

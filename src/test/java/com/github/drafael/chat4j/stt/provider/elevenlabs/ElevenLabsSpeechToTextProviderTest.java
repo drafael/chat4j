@@ -20,6 +20,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,7 +41,7 @@ class ElevenLabsSpeechToTextProviderTest {
         assertThat(subject.displayName()).isEqualTo("ElevenLabs");
         assertThat(subject.requiredEnvVar()).isEqualTo(ElevenLabsSpeechToTextProvider.ENV_VAR);
         assertThat(subject.defaultModel().id()).isEqualTo("scribe_v2");
-        assertThat(subject.bundledModels()).extracting("id").containsExactly("scribe_v2");
+        assertThat(subject.bundledModels()).extracting("id").containsExactly("scribe_v2", "scribe_v3");
     }
 
     @Test
@@ -70,6 +72,8 @@ class ElevenLabsSpeechToTextProviderTest {
                 {"models":[
                   {"model_id":"eleven_flash_v2_5","name":"Flash","can_do_text_to_speech":true},
                   {"model_id":"scribe_v2_realtime","name":"Scribe Realtime"},
+                  {"model_id":"scribe_v3_live","name":"Scribe v3 Live","can_do_speech_to_text":true},
+                  {"model_id":"scribe_v3","name":"Scribe v3"},
                   {"model_id":"scribe_v1","name":"Scribe v1"},
                   {"model_id":"custom_stt","name":"Custom STT","can_do_speech_to_text":true},
                   {"model_id":"bad\\tmodel","name":"Bad"},
@@ -81,8 +85,8 @@ class ElevenLabsSpeechToTextProviderTest {
 
         var models = subject.fetchModels(context(credentials(true)));
 
-        assertThat(models).extracting("id").containsExactly("scribe_v1", "custom_stt", "scribe_v2");
-        assertThat(models.getFirst().label()).contains("deprecated");
+        assertThat(models).extracting("id").containsExactly("scribe_v3", "scribe_v1", "custom_stt", "scribe_v2");
+        assertThat(models.get(1).label()).contains("deprecated");
     }
 
     @Test
@@ -130,15 +134,16 @@ class ElevenLabsSpeechToTextProviderTest {
         assertThat(transport.request.headers()).containsEntry("xi-api-key", "test-key");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"scribe_v2", "scribe_v3"})
     @DisplayName("ElevenLabs transcription sends ElevenLabs multipart request")
-    void transcribe_whenResponseSuccessful_sendsMultipartRequest() throws Exception {
+    void transcribe_whenResponseSuccessful_sendsMultipartRequest(String model) throws Exception {
         Path audio = tempDir.resolve("recording.wav");
         Files.writeString(audio, "RIFF-test");
         var transport = new CapturingTransport(success("{\"text\":\" hello world \"}"));
         var subject = new ElevenLabsSpeechToTextProvider(transport);
 
-        var result = subject.transcribe(new SpeechToTextRequest("elevenlabs", "scribe_v2", audio, 1_000, Files.size(audio)), context(credentials(true)));
+        var result = subject.transcribe(new SpeechToTextRequest("elevenlabs", model, audio, 1_000, Files.size(audio)), context(credentials(true)));
         String body = bodyText(transport.request);
 
         assertThat(result.text()).isEqualTo("hello world");
@@ -147,7 +152,7 @@ class ElevenLabsSpeechToTextProviderTest {
         assertThat(transport.request.headers()).containsEntry("xi-api-key", "test-key");
         assertThat(transport.request.headers()).doesNotContainKey("Authorization");
         assertThat(body).contains("name=\"model_id\"");
-        assertThat(body).contains("scribe_v2");
+        assertThat(body).contains(model);
         assertThat(body).contains("name=\"file\"; filename=\"recording.wav\"");
         assertThat(body).contains("Content-Type: audio/wav");
         assertThat(body).doesNotContain("name=\"model\"");

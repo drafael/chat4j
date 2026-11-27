@@ -7,7 +7,7 @@ Providers:
 - **Groq**: cloud transcription using Groq-compatible Whisper endpoints.
 - **ElevenLabs**: cloud transcription using ElevenLabs Scribe models.
 - **Deepgram**: cloud transcription using Deepgram pre-recorded STT models.
-- **AssemblyAI**: cloud transcription using AssemblyAI prerecorded Universal models.
+- **AssemblyAI**: cloud transcription using AssemblyAI prerecorded models.
 - **Whisper.cpp**: local/offline transcription using the bundled whisper.cpp JNI/native runtime and Chat4J-managed downloaded ggml models.
 - **Vosk**: local transcription using the bundled Vosk Java/native runtime and user-installed Vosk model folders.
 
@@ -20,9 +20,9 @@ Open **Settings → Speech to Text**.
 - **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, `AssemblyAI`, `Whisper.cpp`, or `Vosk`.
 - **Model**:
   - Groq defaults to `whisper-large-v3-turbo`.
-  - ElevenLabs defaults to `scribe_v2` and can refresh available Scribe models from ElevenLabs.
+  - ElevenLabs defaults to `scribe_v2`, also bundles `scribe_v3`, and can refresh available batch Scribe models from ElevenLabs.
   - Deepgram defaults to `nova-3` and can refresh batch-capable STT models from Deepgram.
-  - AssemblyAI defaults to automatic model selection, which omits `speech_models` so AssemblyAI can use Universal-3.5 Pro with Universal-2 fallback. Specific `universal-3-5-pro` and `universal-2` choices are also bundled.
+  - AssemblyAI defaults to automatic model selection, which omits `speech_models` and uses the account's provider default. Specific `assemblyai-stt-3-7`, deprecated-but-available `universal-3-5-pro`, and `universal-2` choices are also bundled.
   - Whisper.cpp shows only installed Chat4J-managed local models that are eligible for local transcription. Downloadable official ggml models are shown in the local model table.
   - Vosk shows only installed local models that are eligible for local transcription.
 - **Local models directory**: base directory for local STT models. The default is under the app data directory at `stt/models` (`${XDG_DATA_HOME:-$HOME/.local/share}/chat4j/stt/models` on non-Windows systems).
@@ -56,7 +56,7 @@ Model refresh calls:
 https://api.elevenlabs.io/v1/models
 ```
 
-Chat4J filters the model list to batch-compatible Scribe speech-recognition models and falls back to bundled `scribe_v2` when no refreshed catalog is available. If a refresh fails, Chat4J preserves the previously cached ElevenLabs model catalog instead of replacing it with the fallback model.
+Chat4J filters the model list to batch-compatible Scribe speech-recognition models and bundles `scribe_v2` and `scribe_v3` when no refreshed catalog is available. The default remains `scribe_v2`; real-time-only `scribe_v2_realtime` and `scribe_v3_live` are excluded from batch discovery. If a refresh fails, Chat4J preserves the previously cached ElevenLabs model catalog.
 
 Advanced ElevenLabs options such as language code, diarization, keyterms, entity detection/redaction, no-verbatim, and webhook transcription are not exposed yet.
 
@@ -104,9 +104,12 @@ The transcription flow uploads the finalized WAV file, submits a transcript job,
 
 Bundled model choices:
 
-- `assemblyai-auto`: automatic/default behavior; Chat4J omits `speech_models`, allowing AssemblyAI to use Universal-3.5 Pro with Universal-2 fallback;
-- `universal-3-5-pro`: AssemblyAI Universal-3.5 Pro;
+- `assemblyai-auto`: automatic/default behavior; Chat4J omits `speech_models` and leaves routing to the account's provider default;
+- `assemblyai-stt-3-7`: AssemblyAI-STT-3.7, the current recommended prerecorded model;
+- `universal-3-5-pro`: deprecated AssemblyAI Universal-3.5 Pro, retained until its retirement is announced;
 - `universal-2`: AssemblyAI Universal-2.
+
+For accounts created on or after November 17, 2026, AssemblyAI defaults omitted `speech_models` to `["assemblyai-stt-3-7"]`. Earlier accounts can have different defaults. See [model selection](https://www.assemblyai.com/docs/pre-recorded-audio/select-the-speech-model).
 
 Advanced AssemblyAI options such as diarization, language detection, PII redaction, summaries, keyterms, webhooks, and region selection are not exposed yet.
 

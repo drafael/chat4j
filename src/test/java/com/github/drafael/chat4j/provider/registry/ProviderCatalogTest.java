@@ -51,7 +51,7 @@ class ProviderCatalogTest {
                 .filteredOn(providerDefinition -> "Perplexity".equals(providerDefinition.name()))
                 .singleElement()
                 .satisfies(providerDefinition -> assertThat(providerDefinition.seedModels()).containsExactly(
-                        "fast", "low", "medium", "high"
+                        "fast", "low", "medium", "high", "xhigh", "ultra"
                 ));
     }
 

@@ -143,10 +143,10 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private boolean supportedBatchModel(ElevenLabsSttApi.Model model, String id) {
-        if (explicitNegativeStt(model) || Strings.CS.equals(id, "scribe_v2_realtime")) {
+        if (explicitNegativeStt(model) || Strings.CS.equalsAny(id, "scribe_v2_realtime", "scribe_v3_live")) {
             return false;
         }
-        if (Strings.CS.equalsAny(id, ElevenLabsSpeechToTextModels.DEFAULT_MODEL_ID, "scribe_v1")) {
+        if (Strings.CS.equalsAny(id, ElevenLabsSpeechToTextModels.DEFAULT_MODEL_ID, ElevenLabsSpeechToTextModels.SCRIBE_V3_MODEL_ID, "scribe_v1")) {
             return true;
         }
         return explicitPositiveStt(model);

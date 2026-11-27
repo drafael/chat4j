@@ -75,6 +75,9 @@ class GoogleAiGenerateContentClientTest {
             "gemini-4-argon, LOW,, low",
             "gemini-4-argon, MEDIUM,, medium",
             "gemini-4-argon, HIGH,, high",
+            "gemini-4-carbon, MEDIUM,, medium",
+            "gemini-4-hydrogen, EXTRA_HIGH,, xhigh",
+            "gemini-4-neon, EXTRA_HIGH,, xhigh",
             "gemini-3.6-flash, MINIMAL,, minimal",
             "gemini-3.6-flash, HIGH,, high",
             "gemini-3-pro-image-preview, MEDIUM,,",
@@ -131,6 +134,8 @@ class GoogleAiGenerateContentClientTest {
             "gemini-4-argon, LOW, low",
             "gemini-4-argon, MEDIUM, medium",
             "gemini-4-argon, HIGH, high",
+            "gemini-4-hydrogen, EXTRA_HIGH, xhigh",
+            "gemini-4-neon, EXTRA_HIGH, xhigh",
             "gemini-3.6-flash, MINIMAL, minimal",
             "gemini-3.6-flash, HIGH, high",
             "gemini-2.5-flash, OFF, none"
